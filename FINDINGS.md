@@ -192,3 +192,15 @@ The numbers in step 2 above are also corrected there. They come from the
 OLED-terminal sweep build (`build/oled-terminal/sweep-blockfix`); the build
 TinyTang ships as `desktop.bin` (`build/desktop/place2`) uses **2641 LUT + 301
 ALU, 1774 FF, 12 BSRAM, 1 DSP**.
+
+Place and route is a second half, and it stops: `nextpnr-himbaechel` packs the
+whole design — BSRAM, DSP, and the IOLOGIC path that carries the three OSER10s —
+and then cannot place a PLL, because **`GW5AST-138C` has no PLL in the open
+database**. The clock *routing* is there, but `pad_pll` and `hclk_pips` are empty
+for this device and populated for GW5A-25A, apicula's `_pll_pads` table has no
+entry for it, and nextpnr's GW5A PLL support is explicitly "PLLA-type PLLs …
+used in GW5A-25A chips". Neither project has anything newer: nextpnr master
+HEAD (`861c57be`, 2026-10-07) is the revision our binary runs, and apicula main
+is what we have cloned. Evidence in
+[`evidence/desktop-core-pnr.txt`](evidence/desktop-core-pnr.txt), reasoning in
+[OPEN-FLOW-DESKTOP.md](OPEN-FLOW-DESKTOP.md).

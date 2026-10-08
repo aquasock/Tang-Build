@@ -1,0 +1,137 @@
+Desktop core (nestang_top) -- place-and-route evidence
+Captured 2026-10-08 19:28 UTC
+nextpnr-himbaechel: 
+                    nextpnr-0.11.1-54-g861c57be)
+device:             GW5AST-LV138PG484AC1/I0
+netlist in:         nestang-top-open.json (8,585 cells)
+
+==================================================================
+1. What the tools needed before they would try
+==================================================================
+
+desktop.sdc as written (nextpnr's SDC reader rejects //):
+    // TinyTang desktop clocks. SPDX-License-Identifier: GPL-3.0-only
+    create_clock -name sys_clk -period 20 [get_nets {sys_clk}]
+    create_clock -name clk -period 46.53 [get_nets {clk}]
+    create_clock -name hclk5 -period 2.6936 [get_nets {hclk5}]
+
+and the IO analysis -- top-level ports the constraint file gives no pin:
+    reset2    declared in nestang_top.sv, consumed by nothing, dropped
+              (its buffer reset2_IBUF_I with it)
+    everything else is constrained by src/desktop/desktop.cst
+
+==================================================================
+2. nextpnr
+==================================================================
+
+  Info: Pack PLL...
+  Info: Pack ADC...
+  Info: Pack GW JTAG...
+  Info: Pack BSRAMs...
+  Info: Pack DSP...
+  Info: Pack INV...
+  Info: Pack buffered nets...
+  Info: Pack EMCU and UserFlash cells...
+  Info: Pack UserFlash cells...
+  Info: Pack DQCE cells...
+  Info: Pack DCS cells...
+  Info: Checksum: 0xa5091331
+  
+  Info: Device utilisation:
+  Info: 	                 VCC:       1/      1   100%
+  Info: 	                 IOB:      16/    324     4%
+  Info: 	                LUT4:    5707/ 138240     4%
+  Info: 	            IOLOGICI:       0/    326     0%
+  Info: 	            IOLOGICO:       3/    326     0%
+  Info: 	           MUX2_LUT5:     589/  69120     0%
+  Info: 	           MUX2_LUT6:      88/  34560     0%
+  Info: 	           MUX2_LUT7:      28/  17280     0%
+  Info: 	           MUX2_LUT8:       8/  17280     0%
+  Info: 	                 ALU:    1190/ 103680     1%
+  Info: 	                 GND:       1/      1   100%
+  Info: 	                 DFF:    2380/ 138240     1%
+  Info: 	           RAM16SDP4:      12/  17280     0%
+  Info: 	               BSRAM:      12/    340     3%
+  Info: 	           MULT12X12:       0/    596     0%
+  Info: 	        MULTALU27X18:       0/    298     0%
+  Info: 	     MULTADDALU12X12:       0/    298     0%
+  Info: 	                 GSR:       1/      1   100%
+  Info: 	              PINCFG:       1/      1   100%
+  Info: 	                BUFG:       1/      1   100%
+  
+  Info: Running custom HCLK placer...
+  Info: Placed 0 cells based on constraints.
+  ERROR: Unable to place cell 'pll_nes.PLL_inst', no BELs remaining to implement cell type 'PLL'
+  0 warnings, 1 error
+
+  (the resource table is the important part: every primitive the design
+   uses is accounted for except the clock ones.  IOLOGICO 3 = the three
+   OSER10s; BSRAM 12; the 1 BUFG is the whole global clock budget this
+   device reports.)
+
+==================================================================
+3. Why there is no PLL to place
+==================================================================
+
+The clock structures in the published device databases:
+
+  device         pad_pll   hclk_pips   io2hclk   hclk_div2 
+  GW5A-25A       25        247         4         4         
+  GW5AST-138C    0         0           0         0         
+  GW5AT-60B      0         0           0         0         
+
+  (read out of apycula/*.msgpack.xz with msgpack + lzma)
+
+apicula's chipdb generator, chipdb.py:
+  - _pll_pads has entries for GW1N-1/-4/-9/-9C, GW1NS-4, GW1NZ-1,
+    GW2A-18/-18C and GW5A-25A.  There is no GW5AST-138C entry, so
+    pll_pads() returns immediately and dev.pad_pll stays empty.
+  - set_chip_flags gives HAS_5A_HCLK to GW5A-25A only; GW5AST-138C gets
+    HAS_PINCFG, HAS_DFF67, HAS_CIN_MUX, NEED_BSRAM_RESET_FIX,
+    NEED_CFGPINS_INVERSION, HAS_5A_DSP -- and no clock flag.
+  - gowin_pll.py, the PLL parameter helper, covers devices up to
+    'GW5A-25 ES'.
+
+nextpnr's generator (himbaechel/uarch/gowin/gowin_arch_gen.py) builds its
+5A HCLK/PLL machinery from those tables:
+    if "HAS_5A_HCLK" in db.chip_flags:
+        chip_flags |= CHIP_HAS_5A_HCLK;
+so no flags and no pad table means no PLL bel.
+
+==================================================================
+4. Reviews of the question 'is there anything newer?'
+==================================================================
+
+nextpnr:
+  our binary        nextpnr-0.11.1-54-g861c57be
+  nextpnr master    861c57be9c9a  2026-10-07   (= the revision we run)
+  PR #1557 'Gowin. GW5A series PLLs.' merged 2025-09-20:
+    "PLLA-type PLLs are implemented, which are used in GW5A-25A chips."
+  PR #1631 'Gowin. Add GW5AST-138C chip.' merged 2026-01-31
+    (adds P&R for the chip; no PLL support)
+
+apicula:
+  our clone         b4e70dc2275da0031e09e9e429e536acc5f923dc  2026-10-02
+  apicula main      b4e70dc   (= our clone; newest)
+  PyPI newest       0.34, uploaded 2026-10-02 -- what is installed
+  newest clock work "GW5AT-60B. Implement the clocks." (that commit)
+  PR #437 'Implement GW5AST-138C clock system.' merged 2026-01-30
+  PR #446 GW5A clock routing + BSRAM init       merged 2026-02-12
+  PR #490 'GW5A. Implement HCLK system.'        merged 2026-04-02
+
+Upstream's own 138K examples use no PLL: pll7 is a primer25k (GW5A-25A)
+make target; the 138k targets are big-shift, attosoc and uart-message.
+pll7 placed and routed here on GW5A-LV25MG121NES (exit 0), so the PLL
+support that exists is real -- it just does not cover this device.
+
+==================================================================
+5. Not verified
+==================================================================
+
+The published 0.34 database is built by apicula's CI from vendor .dat
+files.  Regenerating one locally needs a Gowin install (GOWINHOME), which
+is not present here, so a from-source chipdb was not compared against the
+published one.  Everything above is about the published database plus the
+generator source, both of which are current.
+
+Nothing has been filed on any third-party tracker.

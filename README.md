@@ -32,7 +32,11 @@ Verilog  --yosys-->  JSON  --nextpnr-himbaechel-->  routed JSON  --gowin_pack-->
 - [x] The project's own `fpga/desktop/` core **synthesises** with the open flow —
       8,585 cells, and the three PLLs, one CLKDIV and three OSER10s the vendor
       build has ([`OPEN-FLOW-DESKTOP.md`](OPEN-FLOW-DESKTOP.md))
-- [ ] …placed, routed, packed and running on the board
+- [ ] …placed, routed, packed and running on the board.  **Blocked upstream:**
+      `GW5AST-138C` has no PLL in the open database, so `nextpnr` stops at the
+      first PLL (`pad_pll`/`hclk_pips` are empty for this device and populated
+      for GW5A-25A; apicula's `_pll_pads` has no entry for it).  nextpnr master
+      and apicula main, as of 2026-10-08, still do not cover it.
 - [ ] `.fs` → `.bin` conversion, so open-built cores can load from the SD card
       through TinyTang's existing `tangload`
 
@@ -88,6 +92,7 @@ THIRD_PARTY.md                upstream projects and their licences
 scripts/build-open-bitstream.sh   the whole recipe, one command
 scripts/synth-desktop.sh      synthesise fpga/desktop to a netlist
 scripts/synth-desktop.ys      the yosys script it runs
+scripts/pnr-desktop.sh        take that netlist into nextpnr (stops at the PLL)
 patches/                      source edits the design genuinely needs
  0001-open-toolchain-portability.patch
 tools/capture-uart.py         read the FPGA's UART and hexdump it

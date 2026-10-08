@@ -7,7 +7,8 @@ core — top module `nestang_top`, for `GW5AST-LV138PG484AC1/I0` revision C —
 through **synthesis** with the open toolchain, and out the other side as a
 netlist `nextpnr-himbaechel` can consume.
 
-Status: **synthesis works and is checked. Place and route is the next step.**
+Status: **synthesis works and is checked; place and route runs and stops at the
+PLL, for reasons that are upstream's and are current.**
 
 There is one substantial mistake recorded here on the way to that result. It is
 kept, with its retraction, because the mistake is the more useful half of the
@@ -260,16 +261,97 @@ is in there. The LUT/ALU/FF counts differ substantially and are **not yet
 comparable**: they are pre-place-and-route, and nextpnr packs LUTs, ALUs and
 registers itself. That comparison has to wait for step 3.
 
+## Where the open flow stops
+
+`scripts/pnr-desktop.sh` takes the netlist into `nextpnr-himbaechel` and gets
+through packing, the resource report and the start of placement:
+
+```
+Info: Pack PLL...
+Info: Pack BSRAMs...
+Info: Pack DSP...
+Info: Device utilisation:
+Info:                    IOB:      16/    324     4%
+Info:                   LUT4:    5707/ 138240     4%
+Info:               IOLOGICO:       3/    326     0%
+Info:                    ALU:    1190/ 103680     1%
+Info:                    DFF:    2380/ 138240     1%
+Info:              RAM16SDP4:      12/  17280     0%
+Info:                  BSRAM:      12/    340     3%
+Info:                   BUFG:       1/      1   100%
+
+Info: Running custom HCLK placer...
+ERROR: Unable to place cell 'pll_nes.PLL_inst', no BELs remaining to implement cell type 'PLL'
+```
+
+Everything except the clock primitives is accounted for — BSRAM, DSP, the
+IOLOGIC path (3 `IOLOGICO`, which are the OSER10s), 16 IOs. The wall is the PLL,
+and with 3 PLLs and 1 CLKDIV in the design it is not a wall we can walk around.
+
+Two small translations are needed to get this far, and both are in
+`scripts/pnr-desktop.sh` rather than in the design:
+
+- nextpnr's SDC reader rejects `//` comments and `desktop.sdc` opens with one.
+- nextpnr requires **every** IO to have a location. `reset2` is declared in
+  `nestang_top.sv` ("button S1 and pin 48 are both resets") and used nowhere,
+  and the vendor build assigns it no pin either, so it cannot be placed. The
+  script drops it — after first checking that nothing consumes it, and
+  refusing if anything does, because quietly deleting a live port would be
+  worse than the error it avoids.
+
+### It is the toolchain, and it is current
+
+The netlist carries the primitives the vendor build has, so the question is
+whether the tools can place them. They cannot, for `GW5AST-138C`, and this is
+what the check turned up:
+
+- **The device database has no PLL data for this chip.** The published
+  databases, `pad_pll` / `hclk_pips` / `io2hclk` / `hclk_div2` entries:
+  `GW5A-25A` 25 / 247 / 4 / 4; **`GW5AST-138C` 0 / 0 / 0 / 0**. The clock *net*
+  names are there (`TLPLL0CLK0`, `BLPLL0CLK1`, …) but nothing that tells a
+  placer where a PLL sits.
+- **apicula's generator has no table for it.** `_pll_pads` in `chipdb.py` has
+  entries for `GW1N-1/-4/-9/-9C`, `GW1NS-4`, `GW1NZ-1`, `GW2A-18/-18C` and
+  **`GW5A-25A`** — and none for `GW5AST-138C`, so `pll_pads()` returns without
+  doing anything. Likewise `set_chip_flags` hands `HAS_5A_HCLK` to
+  `GW5A-25A` alone, and nextpnr's generator builds its HCLK/PLL machinery only
+  when the database carries those flags.
+- **nextpnr says so itself.** PR #1557, "Gowin. GW5A series PLLs.": *"PLLA-type
+  PLLs are implemented, which are used in GW5A-25A chips."* The 138K was added
+  later (PR #1631, "Gowin. Add GW5AST-138C chip.") without PLL support.
+- **Upstream's own examples agree.** `pll7` is a `primer25k` (GW5A-25A) make
+  target only; the 138K targets build `big-shift`, `attosoc` and
+  `uart-message`, none of which instantiate a PLL.
+
+And nothing newer is available to try. Our `nextpnr-himbaechel` reports
+`0.11.1-54-g861c57be`, and `861c57be` is **nextpnr master HEAD** as of
+2026-10-07 — the revision this binary is built from. Our apicula clone is at
+`b4e70dc` (2026-10-02), which is apicula **main**; PyPI's newest release, 0.34,
+is from the same day. The most recent clock work upstream is *"GW5AT-60B.
+Implement the clocks."* — being worked through device by device, with the 138K
+not yet reached.
+
+The good news, as far as it goes: nextpnr's Gowin architecture is *generated
+from* those database tables rather than hardcoding devices, so this is a data
+gap upstream rather than an architectural one.
+
+**What was not verified:** the published 0.34 database is built by apicula's CI
+from vendor `.dat` files, and regenerating one locally needs a Gowin install
+(`GOWINHOME`), which is not here. So I cannot rule out that a from-source
+build of the database differs from the published one for this device. That is
+the one gap in the chain above.
+
 ## What is next
 
-1. `nextpnr-himbaechel` on this netlist with the design's own `desktop.cst`
-   (pin constraints) and `desktop.sdc` (timing), for
-   `--device GW5AST-LV138PG484AC1/I0`.
-2. `gowin_pack` with the same `*_as_gpio` options `build.tcl` sets.
-3. Load it (`openFPGALoader -b tangconsole`) and see the desktop on HDMI. Same
-   source as the vendor bitstream, so any difference is the toolchain.
+1. **Report it upstream.** An apicula issue for `GW5AST-138C` PLL/HCLK support
+   is the thing that unblocks a bitstream for this board; nextpnr would follow.
+   (Not filed from here — nothing has been sent to any third-party tracker.)
+2. Watch for it, and re-run `scripts/pnr-desktop.sh` when it lands: the
+   synthesis side and the netlist are done and checked, so the re-run is cheap.
+3. `gowin_pack` with the same `*_as_gpio` options `build.tcl` sets, and then a
+   load — both only reachable once a PLL can be placed.
 
 Open questions carried forward: whether the pre-P&R resource gap closes during
-placement; whether `nextpnr`'s GW5A PLL/HCLK and IOLOGIC support covers three
-PLLs, a CLKDIV and three OSER10s in one design; and the `.fs` → `.bin` question
-for card-based loading.
+placement (4,421 `LUT1..4` + 713 `MUX2_LUT*` and 1,096 ALU here against the
+vendor's 2,641 LUT + 301 ALU); and the `.fs` → `.bin` question for card-based
+loading.
