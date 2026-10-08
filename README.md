@@ -6,7 +6,9 @@ Building FPGA bitstreams for the Sipeed **Tang Console 138K** with an
 This repository records the work, the exact commands, and the raw evidence.
 The short version: on 2026-10-08 a bitstream produced by `yosys` →
 `nextpnr-himbaechel` → `gowin_pack`, loaded by `openFPGALoader`, ran on a real
-Tang Console 138K and talked over its UART.
+Tang Console 138K and talked over its UART; and the project's own desktop core
+now synthesises with the same tools, down to a netlist with every clock
+primitive the vendor build has.
 
 ## Why this matters
 
@@ -27,7 +29,10 @@ Verilog  --yosys-->  JSON  --nextpnr-himbaechel-->  routed JSON  --gowin_pack-->
 - [x] Bitstreams built for `GW5AST-LV138PG484AC1/I0` (incl. a picorv32 SoC that
       timing-closes at 142 MHz)
 - [x] **A bitstream built this way runs on the real board** and transmits over UART
-- [ ] The project's own `fpga/desktop/` core built with the open flow
+- [x] The project's own `fpga/desktop/` core **synthesises** with the open flow —
+      8,585 cells, and the three PLLs, one CLKDIV and three OSER10s the vendor
+      build has ([`OPEN-FLOW-DESKTOP.md`](OPEN-FLOW-DESKTOP.md))
+- [ ] …placed, routed, packed and running on the board
 - [ ] `.fs` → `.bin` conversion, so open-built cores can load from the SD card
       through TinyTang's existing `tangload`
 
@@ -76,13 +81,18 @@ Not verified, and stated plainly in [`FINDINGS.md`](FINDINGS.md):
 
 ```
 README.md                     this file
+OPEN-FLOW-DESKTOP.md          the project's own core through the open tools
 FINDINGS.md                   detailed results, transcripts, open questions
 TOOLCHAIN.md                  what is installed, versions, paths, licences
 THIRD_PARTY.md                upstream projects and their licences
 scripts/build-open-bitstream.sh   the whole recipe, one command
+scripts/synth-desktop.sh      synthesise fpga/desktop to a netlist
+scripts/synth-desktop.ys      the yosys script it runs
+patches/                      source edits the design genuinely needs
+ 0001-open-toolchain-portability.patch
 tools/capture-uart.py         read the FPGA's UART and hexdump it
 tools/decode-message.py       decode the demo payload (bytes / text / hexdump)
-evidence/                     raw captures and the built bitstream
+evidence/                     raw captures, logs and built bitstreams
 ```
 
 ## Licence

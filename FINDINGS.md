@@ -177,3 +177,18 @@ device database used is Apicula's, published in its PyPI package; Apicula builds
 it from vendor data files inside a Docker image (`pepijndevos/apicula:1.9.10.03`)
 at *their* end, and ships the result. Building a chipdb locally would need a
 Gowin install (`GOWINHOME`); using the published one needs nothing.
+
+## 9. The project's own core (added later the same day)
+
+Step 2 above has a first half done: `fpga/desktop` now goes through synthesis
+with the open tools, and the netlist carries the same 3 PLLs, 1 CLKDIV and
+3 OSER10s as the vendor build. That is [OPEN-FLOW-DESKTOP.md](OPEN-FLOW-DESKTOP.md),
+and it is worth reading for the failure mode rather than the result: the first
+version of it produced a netlist with **no clock primitives in it at all** that
+passed every check available, because `read_slang`'s `-v` flag means "modules
+are not automatically instantiated".
+
+The numbers in step 2 above are also corrected there. They come from the
+OLED-terminal sweep build (`build/oled-terminal/sweep-blockfix`); the build
+TinyTang ships as `desktop.bin` (`build/desktop/place2`) uses **2641 LUT + 301
+ALU, 1774 FF, 12 BSRAM, 1 DSP**.
