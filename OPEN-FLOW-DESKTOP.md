@@ -341,15 +341,88 @@ from vendor `.dat` files, and regenerating one locally needs a Gowin install
 build of the database differs from the published one for this device. That is
 the one gap in the chain above.
 
+## The same wall, with no PLL in the design at all
+
+The PLL is only needed for HDMI. The desktop's *own* output is a 24x16 text
+terminal on a PMOD OLED, and that does not care what the clock is. The design
+is also parameterised by clock frequency: `iosys_bl616` is instantiated with
+`.FREQ(21_492_000)` and divides its UART baud from that, and the keyboard link
+already names `CLK_HZ(50_000_000)`. So there is a coherent variant with no PLL
+in it at all, and `scripts/nopll-variant.sh` builds one: every clock domain
+driven from the 50 MHz input, the frequency parameter told the truth, and the
+SDC reduced to a single clock.
+
+It costs HDMI (TMDS needs 371.25 MHz exactly) and makes the NES core run 2.33x
+fast. It keeps the desktop, its register interface, and the OLED terminal.
+
+What it does with the open tools:
+
+```
+synthesis            8,732 cells, no PLL, no CLKDIV, recipe's own check passes
+packing              fine -- LUT4 5714, DFF 2510, ALU 1154, BSRAM 12,
+                     IOLOGICO 3, RAM16SDP4 12, IOB 16
+placement            COMPLETE -- 5,196 cells through the analytic placer
+                     and the annealer, 'SA placement time 7.30s'
+routing              fails on the clock, then nextpnr aborts
+```
+
+```
+Info: Routing globals...
+Warning: Failed to route net 'clk' from X91Y108/CLK1 to X181Y102/FCLKA using dedicated routing.
+Warning: Failed to route net 'clk' from X91Y108/CLK1 to X181Y100/FCLKA using dedicated routing.
+Warning: Failed to route net 'clk' from X91Y108/CLK1 to X181Y57/FCLKA using dedicated routing.
+Info:     'clk' net was routed.
+
+Info: Routing 26875 arcs.
+[...]
+Warning: Failed to find a route for arc 1713 of net clk.
+terminate called after throwing an instance of 'std::out_of_range'
+  what():  dict::at()
+```
+
+The dedicated clock network reaches most of the chip and not the FCLKA inputs
+at `X181Y102`, `X181Y100` and `X181Y57`. nextpnr says the net was routed
+anyway, the general router then fails on the same net, and nextpnr aborts with
+a C++ exception rather than a diagnosis. Six placement seeds, all different,
+lose the same way.
+
+So the obstacle is not the PLL bel. It is that **this chip's clock system is
+not modelled**, and the PLL was only the first thing to fall over it:
+
+- the database has no clock structures for this device at all — `pad_pll` /
+  `hclk_pips` / `io2hclk` / `hclk_div2` are `25/247/4/4` for GW5A-25A and
+  `0/0/0/0` here
+- the whole device reports **one** global clock buffer (`BUFG: 1/1 100%`),
+  where the vendor build of this design uses `PRIMARY 4/8` and `GCLK_PIN 3/24`
+  and puts `hclk5` on `HCLK BANK3_HCLK0`
+- scale, for context — upstream's own designs for this die, which do route:
+
+  | netlist | cells |
+  |---|---|
+  | `uart-message-tangmega138k.json` | 177 |
+  | `attosoc-tangmega138k.json` | 3,328 (1,119 LUT4, 545 DFF) |
+  | `nestang_top`, this variant | 8,730 (2,262 LUT4 + 2,202 LUT1..3, 2,414 DFF) |
+
+That this core has about four times the clock loads of anything routed on this
+device before is consistent with the clock network's coverage being the limit
+rather than the design — consistent with, not proof of. The untested
+hypothesis is that a smaller variant (a desktop-only core without the NES)
+would fit inside the coverage the database does model, and that is the most
+promising workaround left: it would need none of the PLL work, only the clock
+distribution.
+
 ## What is next
 
-1. **Report it upstream.** An apicula issue for `GW5AST-138C` PLL/HCLK support
-   is the thing that unblocks a bitstream for this board; nextpnr would follow.
-   (Not filed from here — nothing has been sent to any third-party tracker.)
-2. Watch for it, and re-run `scripts/pnr-desktop.sh` when it lands: the
-   synthesis side and the netlist are done and checked, so the re-run is cheap.
+1. **Report it upstream.** Two things worth filing, and neither has been sent:
+   the GW5AST-138C clock system (PLL bels, pad mapping, HCLK pips, global clock
+   resources) in apicula; and nextpnr aborting with `std::out_of_range` instead
+   of reporting an unroutable clock net.
+2. **Try the desktop-only variant.** If the failure scales with design size,
+   a core without the NES should route, pack and load, and light the OLED —
+   a visible result from an entirely open flow, and one that needs none of the
+   PLL work.
 3. `gowin_pack` with the same `*_as_gpio` options `build.tcl` sets, and then a
-   load — both only reachable once a PLL can be placed.
+   load — both only reachable once a clock net routes.
 
 Open questions carried forward: whether the pre-P&R resource gap closes during
 placement (4,421 `LUT1..4` + 713 `MUX2_LUT*` and 1,096 ALU here against the

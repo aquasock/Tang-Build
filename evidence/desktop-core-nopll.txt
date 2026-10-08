@@ -1,0 +1,211 @@
+Desktop core -- no-PLL bring-up variant
+Captured 2026-10-08 19:42 UTC
+nextpnr-himbaechel: nextpnr-0.11.1-54-g861c57be)
+device:             GW5AST-LV138PG484AC1/I0
+
+==================================================================
+1. What the variant changes (scripts/nopll-variant.sh)
+==================================================================
+
+  a. nestang_top.sv: the three PLL instantiations and the CLKDIV are
+     replaced by assignments from the 50 MHz input:
+
+       assign clk27 = sys_clk;   assign clk  = sys_clk;
+       assign fclk  = sys_clk;   assign hclk5 = sys_clk;
+       assign hclk  = sys_clk;
+
+  b. iosys_bl616's frequency parameter, which its UART baud is divided
+     from, is retargeted: .FREQ(21_492_000) -> .FREQ(50_000_000).
+     (The keyboard link already names CLK_HZ(50_000_000).)
+
+  c. desktop.sdc: from three clocks to one.  In this variant sys_clk,
+     clk and hclk5 are the same net, and giving one net two periods
+     makes nextpnr's clock handling fail -- it names the net it cannot
+     route.  Measured both ways; this is the single-clock version:
+       # Bring-up variant: one clock.  Every domain runs from the 50 MHz input.
+       create_clock -name sys_clk -period 20 [get_nets {sys_clk}]
+
+  Cost of the variant, stated plainly: HDMI cannot work (TMDS needs
+  371.25 MHz exactly) and the NES core runs 2.33x fast.  Kept: the
+  desktop, its register interface, the OLED terminal.
+
+==================================================================
+2. Synthesis -- clean
+==================================================================
+
+  
+  === nestang_top ===
+  
+          +----------Local Count, excluding submodules.
+          | 
+       6563 wires
+      14221 wire bits
+       6563 public wires
+      14221 public wire bits
+         15 ports
+         33 port bits
+       8732 cells
+          1   $scopeinfo
+       1063   ALU
+        313   DFF
+       1989   DFFRE
+        112   DFFSE
+         10   DPB
+          1   DPX9B
+          4   ELVDS_OBUF
+          1   GND
+          8   IBUF
+         16   IOBUF
+        368   LUT1
+        770   LUT2
+       1064   LUT3
+       2262   LUT4
+        607   MUX2_LUT5
+         79   MUX2_LUT6
+         28   MUX2_LUT7
+         10   MUX2_LUT8
+          9   OBUF
+          3   OSER10
+         12   RAM16SDP4
+          1   SDPX9B
+          1   VCC
+  
+  Warnings: 63 unique messages, 99 total
+  Warnings: 1 experimental features used (not excluded with -x).
+  No PLL and no CLKDIV are instantiated (grep for gowin_pll|CLKDIV in the
+  variant's nestang_top.sv returns 0), and the recipe's own check passes:
+  blackboxing 7 of the library's 170 modules
+  no primitive instance was dropped (70 dangling wires checked against 18 output pins)
+
+==================================================================
+3. Packing and placement -- complete
+==================================================================
+
+  Info: Device utilisation:
+  Info: 	                 VCC:       1/      1   100%
+  Info: 	                 IOB:      16/    324     4%
+  Info: 	                LUT4:    5714/ 138240     4%
+  Info: 	            IOLOGICI:       0/    326     0%
+  Info: 	            IOLOGICO:       3/    326     0%
+  Info: 	           MUX2_LUT5:     607/  69120     0%
+  Info: 	           MUX2_LUT6:      79/  34560     0%
+  Info: 	           MUX2_LUT7:      28/  17280     0%
+  Info: 	           MUX2_LUT8:      10/  17280     0%
+  Info: 	                 ALU:    1154/ 103680     1%
+  Info: 	                 GND:       1/      1   100%
+  Info: 	                 DFF:    2510/ 138240     1%
+  Info: 	           RAM16SDP4:      12/  17280     0%
+  Info: 	               BSRAM:      12/    340     3%
+  Info: 	           MULT12X12:       0/    596     0%
+  Info: 	        MULTALU27X18:       0/    298     0%
+  Info: 	     MULTADDALU12X12:       0/    298     0%
+  Info: 	                 GSR:       1/      1   100%
+  Info: 	              PINCFG:       1/      1   100%
+  Info: 	                BUFG:       1/      1   100%
+  
+  Info: Running custom HCLK placer...
+
+  Info: Creating initial analytic placement for 5196 cells, random placement wirelen = 792575.
+  Info: HeAP Placer Time: 4.62s
+  Info: Running simulated annealing placer for refinement.
+  Info: SA placement time 7.30s
+  Info: Max frequency for clock 'clk': 121.65 MHz (PASS at 12.00 MHz)
+
+  Placement ran to completion: 5,196 cells through the analytic placer
+  and the annealer.  Nothing about the design resisted placement -- the
+  PLL was the only thing that ever did, and it is gone in this variant.
+
+==================================================================
+4. Routing -- the clock
+==================================================================
+
+  Info: Routing globals...
+  Warning: Failed to route net 'clk' from X91Y108/CLK1 to X181Y102/FCLKA using dedicated routing.
+  Warning: Failed to route net 'clk' from X91Y108/CLK1 to X181Y100/FCLKA using dedicated routing.
+  Warning: Failed to route net 'clk' from X91Y108/CLK1 to X181Y57/FCLKA using dedicated routing.
+  Info:     'clk' net was routed.
+  
+  Info: Routing..
+  Info: Setting up routing queue.
+  Info: Routing 26875 arcs.
+  Info:            |   (re-)routed arcs  |   delta    | remaining|       time spent     |
+  Info:    IterCnt |  w/ripup   wo/ripup |  w/r  wo/r |      arcs| batch(sec) total(sec)|
+  Info:       1000 |        8        991 |    8   991 |     25884|       0.30       0.30|
+  Info:       2000 |       44       1945 |   36   954 |     24924|       0.17       0.47|
+  Info:       3000 |       97       2763 |   53   818 |     23981|       0.20       0.67|
+  Info:       4000 |      126       3490 |   29   727 |     23030|       0.15       0.82|
+  Info:       5000 |      154       4175 |   28   685 |     22061|       0.15       0.96|
+  Info:       6000 |      171       5000 |   17   825 |     21081|       0.14       1.10|
+  Info:       7000 |      195       5932 |   24   932 |     20109|       0.19       1.28|
+  Warning: Failed to find a route for arc 1713 of net clk.
+  terminate called after throwing an instance of 'std::out_of_range'
+    what():  dict::at()
+
+  Read it in order: the dedicated clock network reaches most of the
+  chip but not the FCLKA inputs at X181Y102, X181Y100 and X181Y57;
+  nextpnr then says the net 'was routed' anyway, the general router
+  hits arc 1713 of the same net, and nextpnr aborts -- a C++
+  std::out_of_range from dict::at(), not a diagnosis.
+
+==================================================================
+5. Not a placement accident: six seeds
+==================================================================
+
+  seed   exit   failures in the log   reported max frequency for 'clk'
+  1      134    2                     129.68 MHz
+  2      134    2                     119.62 MHz
+  3      134    2                     102.36 MHz
+  4      134    2                     97.11 MHz
+  5      134    2                     111.37 MHz
+  6      134    2                     105.00 MHz
+
+  All six place differently (97-130 MHz, so different topologies) and
+  all six fail to route the same net.
+
+==================================================================
+6. Why -- the chip's clocking is the part that is not modelled
+==================================================================
+
+  a. The device database has no clock structures for this chip.  Read
+     out of apycula/*.msgpack.xz with msgpack + lzma:
+
+       device         pad_pll   hclk_pips   io2hclk   hclk_div2 
+       GW5A-25A       25        247         4         4         
+       GW5AST-138C    0         0           0         0         
+
+  b. The whole device reports one global clock buffer.  nextpnr, this
+     run: 'BUFG: 1/1 100%'.  The vendor build of this same design
+     (build/desktop/place2/desktop.rpt.txt, section 5) reports
+     'PRIMARY 4/8', 'GCLK_PIN 3/24', 'CLKDIV 1/24', and section 6 shows
+     hclk5 distributed on 'HCLK BANK3_HCLK0'.
+
+  c. Scale.  Upstream's own designs for this die, which do route:
+
+       uart-message-tangmega138k.json      177 cells
+       attosoc-tangmega138k.json         3,328 cells   (1,119 LUT4, 545 DFF)
+       nestang_top, this variant         8,730 cells   (2,262 LUT4+2,202 LUT1..3, 2,414 DFF)
+
+     This core has ~4x the clock loads of anything that has been routed
+     on this device, and the clock has to reach correspondingly more of
+     the die.  That is consistent with, but not proof of, the clock
+     network's coverage being the limit rather than the design.
+
+==================================================================
+7. What this does and does not establish
+==================================================================
+
+  Established: the design is placeable on this die with the open tools
+  once the clock primitives are removed from it, and the remaining
+  obstacle is routing the clock -- not the PLL bel, and not anything
+  about the logic, IO, BSRAM, DSP or IOLOGIC.
+
+  Not established: no bitstream was produced, nothing was packed with
+  gowin_pack, and nothing was loaded.  Whether a smaller variant (a
+  desktop-only core without the NES) would fit inside the clock
+  network's coverage is an untested hypothesis, and it is the most
+  promising workaround left.
+
+  Also worth an upstream report on its own: nextpnr aborts with
+  std::out_of_range instead of reporting that it cannot route a clock
+  net, and the 1 BUFG figure for a device whose vendor build uses four
+  primary clocks looks like missing data rather than a small clock tree.

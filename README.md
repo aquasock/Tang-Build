@@ -33,10 +33,15 @@ Verilog  --yosys-->  JSON  --nextpnr-himbaechel-->  routed JSON  --gowin_pack-->
       8,585 cells, and the three PLLs, one CLKDIV and three OSER10s the vendor
       build has ([`OPEN-FLOW-DESKTOP.md`](OPEN-FLOW-DESKTOP.md))
 - [ ] …placed, routed, packed and running on the board.  **Blocked upstream:**
-      `GW5AST-138C` has no PLL in the open database, so `nextpnr` stops at the
-      first PLL (`pad_pll`/`hclk_pips` are empty for this device and populated
-      for GW5A-25A; apicula's `_pll_pads` has no entry for it).  nextpnr master
-      and apicula main, as of 2026-10-08, still do not cover it.
+      `GW5AST-138C` has no clock model in the open database.  With the PLLs in,
+      nextpnr cannot place a PLL (`pad_pll`/`hclk_pips` empty for this device,
+      populated for GW5A-25A, and apicula's `_pll_pads` has no entry for it).
+      With the PLLs removed entirely — see
+      [`scripts/nopll-variant.sh`](scripts/nopll-variant.sh) — the design
+      **synthesises and places completely**, then fails to *route the clock
+      net*, and nextpnr aborts on a C++ exception.  So the gap is this chip's
+      clocking, not the PLL alone.  nextpnr master and apicula main, as of
+      2026-10-08, cover neither.
 - [ ] `.fs` → `.bin` conversion, so open-built cores can load from the SD card
       through TinyTang's existing `tangload`
 
@@ -93,6 +98,7 @@ scripts/build-open-bitstream.sh   the whole recipe, one command
 scripts/synth-desktop.sh      synthesise fpga/desktop to a netlist
 scripts/synth-desktop.ys      the yosys script it runs
 scripts/pnr-desktop.sh        take that netlist into nextpnr (stops at the PLL)
+scripts/nopll-variant.sh      build the no-PLL bring-up variant (experiment)
 patches/                      source edits the design genuinely needs
  0001-open-toolchain-portability.patch
 tools/capture-uart.py         read the FPGA's UART and hexdump it

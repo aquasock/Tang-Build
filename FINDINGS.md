@@ -193,14 +193,29 @@ OLED-terminal sweep build (`build/oled-terminal/sweep-blockfix`); the build
 TinyTang ships as `desktop.bin` (`build/desktop/place2`) uses **2641 LUT + 301
 ALU, 1774 FF, 12 BSRAM, 1 DSP**.
 
-Place and route is a second half, and it stops: `nextpnr-himbaechel` packs the
+Place and route is a second half, and it stops. `nextpnr-himbaechel` packs the
 whole design — BSRAM, DSP, and the IOLOGIC path that carries the three OSER10s —
 and then cannot place a PLL, because **`GW5AST-138C` has no PLL in the open
 database**. The clock *routing* is there, but `pad_pll` and `hclk_pips` are empty
 for this device and populated for GW5A-25A, apicula's `_pll_pads` table has no
 entry for it, and nextpnr's GW5A PLL support is explicitly "PLLA-type PLLs …
-used in GW5A-25A chips". Neither project has anything newer: nextpnr master
-HEAD (`861c57be`, 2026-10-07) is the revision our binary runs, and apicula main
-is what we have cloned. Evidence in
-[`evidence/desktop-core-pnr.txt`](evidence/desktop-core-pnr.txt), reasoning in
-[OPEN-FLOW-DESKTOP.md](OPEN-FLOW-DESKTOP.md).
+used in GW5A-25A chips".
+
+That turned out to be the first thing to fall over a larger gap. Removing the
+PLLs altogether — every clock domain driven from the 50 MHz input, with the host
+interface's frequency parameter retargeted so the BL616 link keeps its baud
+(`scripts/nopll-variant.sh`) — gives a variant that **synthesises (8,732 cells)
+and places completely**, then fails to *route the clock net*: the dedicated
+clock network does not reach three tiles, and nextpnr aborts with
+`std::out_of_range` rather than reporting it. Six placement seeds, all
+different, lose the same way. The device reports one global clock buffer where
+the vendor build of this design uses four primary clocks and three GCLK_PINs,
+and this core carries about four times the clock loads of anything upstream has
+routed on this die.
+
+So the gap is this chip's *clocking*, not the PLL alone. Neither project has
+anything newer: nextpnr master HEAD (`861c57be`, 2026-10-07) is the revision our
+binary runs, and apicula main is what we have cloned. Evidence in
+[`evidence/desktop-core-pnr.txt`](evidence/desktop-core-pnr.txt) and
+[`evidence/desktop-core-nopll.txt`](evidence/desktop-core-nopll.txt), reasoning
+in [OPEN-FLOW-DESKTOP.md](OPEN-FLOW-DESKTOP.md).
