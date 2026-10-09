@@ -4,11 +4,16 @@
 #
 #   scripts/pnr-desktop.sh <reconstructed-design-tree> [netlist.json]
 #
-# Expect to be stopped at the PLL.  As of 2026-10-08 the GW5AST-138C
-# architecture has no placeable PLL bel -- see ../OPEN-FLOW-DESKTOP.md, section
-# "Where the open flow stops" -- so this gets as far as placing the first PLL
-# and reports what it found.  Everything before that point (packing, BSRAM,
-# the IOLOGIC/OSER10 path, IO) is placed successfully.
+# This needs the FORK's nextpnr-himbaechel, not oss-cad-suite's.  The suite's
+# binary carries the database published in apicula's PyPI package, which for
+# GW5AST-138C has no PLL site and no clock pips, so it stops at
+# "no BELs remaining to implement cell type 'PLL'".  The fork's is built
+# against the database regenerated from the local Gowin install, which carries
+# them.  See TOOLCHAIN.md, "Building nextpnr against the database".
+#
+# Point at it with NEXTPNR_HIMBAECHEL, or leave that unset to use the default
+# path below.  The script refuses the suite's copy outright rather than trying
+# to place and reporting a wall that is really a wrong binary.
 #
 # Two pieces of design-to-toolchain translation are needed first, and both are
 # done here rather than by editing the design:
@@ -40,7 +45,41 @@ if [[ -z ${SYNTH_DESKTOP_NO_ENV:-} ]]; then
         [[ -f $env ]] && { source "$env"; break; }
     done
 fi
-command -v nextpnr-himbaechel >/dev/null || { echo "nextpnr-himbaechel not found" >&2; exit 2; }
+
+# The suite's environment script UNSETS PYTHONHOME ("unset PYTHONHOME if set"),
+# and nextpnr's embedded interpreter then resolves its prefix to the /yosyshq
+# the suite was built with and dies with "failed to get the Python codec of the
+# filesystem encoding".  It has to be set again, after that script runs.
+if [[ -z ${SYNTH_DESKTOP_NO_ENV:-} ]]; then
+    : "${PYTHONHOME:=${HOME}/oss-cad-suite}"
+    export PYTHONHOME
+fi
+
+# The fork's nextpnr, not the suite's -- see the header.
+default_nextpnr=/home/vash/tools/nextpnr-mathieufro/nextpnr-himbaechel
+nextpnr=${NEXTPNR_HIMBAECHEL:-$default_nextpnr}
+case $nextpnr in
+    */oss-cad-suite/*)
+        cat >&2 <<'EOF'
+NEXTPNR_HIMBAECHEL points at oss-cad-suite's nextpnr-himbaechel.  That build
+carries the published GW5AST-138C database, which has no PLL site and no clock
+pips for this device, so it cannot place this core.  Build the fork's instead
+and point NEXTPNR_HIMBAECHEL at it -- TOOLCHAIN.md, "Building nextpnr against
+the database".
+EOF
+        exit 2
+        ;;
+esac
+[[ -x $nextpnr ]] || {
+    cat >&2 <<EOF
+no nextpnr-himbaechel at $nextpnr
+
+Set NEXTPNR_HIMBAECHEL to the fork's build, or build it where this script
+expects it.  TOOLCHAIN.md has the command and the revision to check it with.
+EOF
+    exit 2
+}
+echo "nextpnr: $nextpnr"
 
 cst=$tree/src/desktop/desktop.cst
 sdc=$tree/src/desktop/desktop.sdc
@@ -140,9 +179,9 @@ yosys -q -s "$work/drop.ys" > "$work/drop.log" 2>&1 || {
 
 # ------------------------------------------------------------------ nextpnr --
 echo
-echo "placing and routing (expect the PLL to be the thing that stops it)"
+echo "placing and routing"
 set +e
-nextpnr-himbaechel \
+"$nextpnr" \
     --json "$work/pnr-input.json" \
     --write "$work/pnr.json" \
     --device GW5AST-LV138PG484AC1/I0 \
@@ -161,17 +200,17 @@ else
     if grep -q "no BELs remaining to implement cell type 'PLL'" "$work/nextpnr.log"; then
         cat <<'EOF'
 
-That is the known wall, not a mistake in the netlist:
+The design is fine; the binary is wrong.
 
-  the design instantiates 3 PLL / 1 CLKDIV / 3 OSER10, exactly as the vendor
-  build does, and the netlist is checked for them.  The GW5AST-138C
-  architecture in this nextpnr build has no placeable PLL bel.  apicula grants
-  its 5A clock flag (HAS_5A_HCLK) to GW5A-25A only, and nextpnr's GW5A PLL
-  work covers the 25A's PLLA type.  Nothing newer is available: nextpnr
-  master HEAD is 861c57be (2026-10-07), which is the revision this binary is
-  built from, and apicula main is b4e70dc (2026-10-02).
+  `no BELs remaining to implement cell type 'PLL'` means the architecture this
+  nextpnr was built with carries no PLL site -- which is the PUBLISHED
+  GW5AST-138C database, not the regenerated one.  Check that the binary in use
+  is the fork's and not oss-cad-suite's, and that it was built with the fork's
+  apycula on PYTHONPATH for the whole build.  The usual cause is a misspelled
+  -DHIMBAECHEL_GOWIN_DEVICES: CMake ignores it with only a warning and builds
+  the architecture from whatever apycula it found.
 
-See ../OPEN-FLOW-DESKTOP.md.
+See TOOLCHAIN.md, "Building nextpnr against the database".
 EOF
     fi
 fi
