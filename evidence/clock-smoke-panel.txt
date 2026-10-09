@@ -1,0 +1,182 @@
+# clock-smoke as a three-PLL instrument, and the decoder correction it forced
+
+# Design:   fpga/clock-smoke/clock_smoke.v -- three PLLs, a four-clock liveness
+#           panel on PMOD1, and a UART report carrying three rates and three
+#           lock bits
+# Built:    scripts/build-clock-smoke.sh
+# Bitstream: 34,668,145 bytes
+#          sha256 d563fa3c8685436bc8ba389247d270d0d9b364948962a7f7e80cc447e37ec798
+# Loaded:   openFPGALoader -b tangconsole, one-wire (MCU port 0403:6010), SRAM,
+#           erase + load to 100%, DONE, after a power cycle
+# Captured: /dev/ttyUSB1 at 115200, 25 s -> 37 lines
+# Observed: user report -- all four heartbeat LEDs blinking, in sync and IN PHASE
+
+==================================================================
+1. The panel: one lane per clock, each divider in its own domain
+==================================================================
+
+All eight PMOD1 lanes are driven.  Four are heartbeats, three are PLL locks, one
+is a spare held high:
+
+  LED 1  sys_clk   50.00 MHz  heartbeat, 1 Hz    (modulus 25,000,000)
+  LED 2  clk27     27.00 MHz  heartbeat, 1 Hz    (modulus 13,500,000)
+  LED 3  hclk      74.25 MHz  heartbeat, 1 Hz    (modulus 37,125,000)
+  LED 4  clk_nes   21.50 MHz  heartbeat, 1 Hz    (modulus 10,750,000)
+  LED 5  pll_27    LOCK       steady
+  LED 6  pll_hdmi  LOCK       steady
+  LED 7  pll_nes   LOCK       steady
+  LED 8  spare                steady
+
+The point of the design is that each heartbeat counter is clocked BY THE CLOCK IT
+MEASURES.  A divider clocked by sys_clk would prove only that sys_clk is alive;
+clocked in its own domain, the lane is a witness to that clock and to nothing
+else -- if the PLL stops, its counter stops, its toggle flop stays where it
+powered up, and the lane goes dark.
+
+Each modulus is that clock's cycles in half a second at its NOMINAL frequency, so
+each lane blinks at exactly 1 Hz when the clock is right, and the modulus is a
+test rather than a convenience: a clock at twice its nominal rate blinks at 2 Hz.
+That is what made this design the instrument that caught the decoder error in
+section 2.
+
+The three spares are driven HIGH rather than left floating, so nothing on the
+panel is dark by accident: this module lights on HIGH, so ANY dark lane is a
+fault, and which fault is read from the lane's position.  (The polarity is
+measured, not assumed -- see clock-smoke-chaser.txt section 3, where driving one
+lane low made it the dark one.)
+
+==================================================================
+2. The decoder was wrong by exactly 2x, and that is what "doubled" was
+==================================================================
+
+The design counts EDGES of bit 12 of each clock's counter.  Bit 12 has a PERIOD
+of 2^13 = 8192 cycles and produces TWO edges per period, so a count of N edges
+spans N x 4096 cycles of that clock.  tools/decode-clock-smoke.py multiplied by
+8192 instead, on the docstring's reading that "a count of its edges is a count of
+cycles".  Every rate it has reported since core-log entry 7 is therefore twice
+the truth.
+
+Three independent confirmations, none of them using the corrected script:
+
+  * THE PANEL.  Four heartbeats, all at 1 Hz and in phase.  They blink at 1 Hz
+    only if every clock is at its nominal rate, and in phase only if they share
+    one frequency -- which they do, because every clock here is an exact rational
+    multiple of the one 50 MHz crystal.  If clk27 were 54 MHz its lane would
+    blink at 2 Hz and could not stay in phase.
+
+  * HAND ARITHMETIC on the raw capture.  From consecutive lines, c27 advances
+    0x1148 = 4424 and hk advances 0x2F76 = 12150.  For a line of 2^25 sys_clk
+    cycles:  4424 x 4096 / 2^25 = 0.5400 x sys_clk, and 12150 x 4096 / 2^25 =
+    1.4832.  The design asks for 0.5400 and 1.4851.
+
+  * THE RECORDED NUMBER.  Decoded with the corrected factor, hclk reads 74.2452
+    MHz -- which is the figure evidence/clock-smoke-readout.txt recorded, decoded
+    BEFORE entry 7 changed this factor.  The original script was right.
+
+The design's own SDC said so all along: `create_clock -name clk27 -period 37.037`
+is 27 MHz, and the decoder was reporting 54 for the same net.  A constraint file
+and a measurement contradicted each other for five core-log cycles and nobody
+reconciled them.
+
+WHAT IT OVERTURNS.  The committed design was never doubled.  And the ODIV
+conclusion inverts: ODIV0_SEL is a straight divisor, so 50 divides by 50, which
+is what the design asks for, and 100 halves the output to 13.5.  Entry 9's six
+power-cycled variant-B runs, re-read through the corrected factor, say exactly
+that.  So the desktop core's `ODIV0_SEL = 100` -- the workaround entries 10 and 11
+landed -- is a 2x error: it halves pll_27 to 13.5 MHz, which halves pll_hdmi's
+reference, which puts hclk5 at 185.6 MHz instead of 371.25.  That is half the
+TMDS bit clock, and it is in the bitstream that was loaded on 2026-10-09.
+
+It does NOT crack the display on its own: entry 11 compared two pixel rates and
+the valid one was dark, so the pixel clock is not the cause.  What it means is
+that the current desktop core carries TWO defects, and the known one should be
+removed before the unknown one is tested.
+
+==================================================================
+3. The third PLL exists now, and it is measured rather than inferred
+==================================================================
+
+`pll_nes` was added on PLL_B[1] at X32Y108 -- the same site the desktop core's
+own place-and-route used -- so this design holds the same trio the real core
+does: PLL_L[1], PLL_L[3], PLL_B[1].  nextpnr reports `PLL: 3/12` placed.
+
+MDIV 40 -> VCO 2000 MHz, ODIV0 93 -> 21.505 MHz, matching the desktop core's
+gowin_pll_nes.v defparams exactly.
+
+Until now that clock's correctness was INFERRED: the desktop core's keylink
+answered coherently at a 2 Mbaud baud derived from it, which argues the clock is
+right but measures nothing.  It is now read from its own counter.
+
+==================================================================
+4. The measurement: all three PLLs, all at their designed rates
+==================================================================
+
+  37 lines over 25 s, every one of them `lock=111`, no sample skipped:
+
+    clk27    0.5400 x sys_clk  =  26.9982 MHz   designed 0.5400 -> 27.00
+    hclk     1.4850 x sys_clk  =  74.2452 MHz   designed 1.4851 -> 74.25
+    clk_nes  0.4301 x sys_clk  =  21.5040 MHz   designed 0.4300 -> 21.50
+
+Three of three at their designed values, and the corrected script lands on them
+-- so the correction is confirmed by the tool as well as by the panel and by
+hand.  Both PLL lock bits this project could already see, and the third, are set.
+
+The user reports the four heartbeat lanes blinking at 1 Hz and in phase, which is
+the prediction and is also the sync question answered empirically: no drift,
+because there is no second oscillator to drift against.
+
+==================================================================
+5. The hclk anomaly from the previous cycle, resolved and bounded
+==================================================================
+
+The chaser's two builds both reported hclk = 0 while this panel build and the two
+pre-chaser builds report it alive.  Same logic, four placements, two outcomes,
+with 0 route errors and timing PASS in all of them.
+
+So it is placement-dependent, not design-dependent: the fabric fallback that
+carries hclk5 to the CLKDIV can be made to fail by an unrelated change to the
+I/O and a little sys_clk logic.  That is the display's failure in miniature, and
+it is still un-explained in mechanism -- but it is bounded, reproducible, and
+now measurable by a counter that either advances or does not.
+
+==================================================================
+6. An open defect in the readout, found while checking the panel
+==================================================================
+
+The `s=` field of every captured line reads 0, and it should alternate: it is
+`cnt_sys[24]`, which toggles at 1.49 Hz.  The routed netlist says why -- `cnt_sys`
+is declared `reg [24:0]` and comes back as 24 flop cells, not 25, so bit 24 is
+gone and the field is stuck.
+
+The RTL carries `(* keep *)` on that counter precisely because this happened
+before, and its comment says the keep was the fix: "without it yosys trims a
+counter whose top bit is the only one read -- cnt_sys[24] came back as 24 flops,
+not 25 -- so cnt_sys[24] silently became bit 23 and the reported rate doubled".
+
+The keep is evidently not holding for `cnt_sys`.  Nothing depends on the field
+today -- clk27's and hclk's reports read `cnt_27[12]` and `cnt_hclk[12]`, and both
+counters keep their bits -- but it is the same class of silent shift that cost
+this project a factor of two before, and it is recorded rather than left as a
+loose end.
+
+==================================================================
+7. Reproducing this, and what is next
+==================================================================
+
+  bash scripts/build-clock-smoke.sh                  # ~1 min
+  # power-cycle the board first, always -- TOOLCHAIN.md, board side
+  openFPGALoader -b tangconsole /home/vash/tools/clock-smoke/clock-smoke.fs
+  stty -F /dev/ttyUSB1 115200 raw -echo
+  timeout 25 cat /dev/ttyUSB1 > capture.bin
+  python3 tools/decode-clock-smoke.py capture.bin --seconds 25
+
+The decoder's message format changed with the design (58 bytes, `lock=DEF`, an
+`ns=` field), so captures older than this cycle no longer parse.  That is
+expected; the corrected factor was verified against a pre-change capture by hand.
+
+Next, and it is the step the instrument exists for: the SWEEP.  Change one PLL's
+divider, rebuild, and confirm the measured rate follows the request -- one PLL at
+a time, with the UART as the number and the panel as the light.  That is what
+"blink them any way I want" means, and it is a script now rather than an
+investigation.  Then, and only then, the desktop core's `ODIV0_SEL` goes back to
+50 before the HDMI is touched again, so a dark screen means something new.

@@ -886,3 +886,42 @@ Discriminate the `hclk` failure before drawing anything from it, because the two
 - User Test: PASS
 
 ---
+
+## 30 COMMIT Unreleased 2026-10-09T10:20:20-07:00
+
+#### Coming From:
+
+Unreleased 069d404
+
+#### Purpose:
+
+Make the clock-smoke panel cover all three of the desktop core's PLLs and measure each one, so that a PLL's ability to take a divider and produce the frequency asked for is established before the HDMI is touched again.
+
+#### Outcome:
+
+The third PLL now exists in the instrument, is measured rather than inferred, and measuring it forced the correction of a two-times error in this project's own decoder that five entries had built conclusions on. `pll_nes` was added on PLL_B[1] at X32Y108, the same site the desktop core's own place-and-route used, so this design holds the trio the real core holds, PLL_L[1], PLL_L[3] and PLL_B[1], and nextpnr reports three of twelve PLLs placed; its configuration is the desktop core's own, MDIV 40 to a 2000 MHz VCO and ODIV0 93 to 21.505 MHz. Until this cycle that clock's correctness was inferred only: the desktop core's keylink answered coherently at a baud derived from it, which argues the clock is right without measuring anything. The eight lanes became a liveness panel in which each heartbeat's divider sits IN THE CLOCK'S OWN DOMAIN, which is the property that makes a lane a witness to that clock and to nothing else, a divider clocked by sys_clk proving only that sys_clk is alive; each modulus is that clock's cycles in half a second at its nominal frequency, so a lane blinks at exactly 1 Hz when the clock is right and at 2 Hz when it is wrong by a factor of two, and the three spare lanes are held high so that nothing on the panel is dark by accident and any dark lane is a fault whose kind is read from its position. The report grew to 58 bytes with three lock bits and three rates, `clock-smoke s=A lock=DEF c27=XXXX hk=XXXX ns=XXXX n=XXXX`, and the first load after a power cycle returned every one of 37 lines reading `lock=111` with no sample skipped: all three PLLs lock, and the three outputs measure 26.9982, 74.2452 and 21.5040 MHz against designed 27.00, 74.25 and 21.50. The user reports the four heartbeat lanes blinking at 1 Hz and in phase, which is both the design's prediction and the sync question answered on hardware, since there is no second oscillator here for anything to drift against. The correction the panel forced is the cycle's most important result. The design counts EDGES of bit 12 of each counter; that bit has a period of 8192 cycles and yields two edges per period, so a count of N edges spans N times 4096 cycles, where tools/decode-clock-smoke.py multiplied by 8192 on the reading that an edge count is a cycle count. Every rate it reported since entry 7 was twice the truth, and the disagreement was confirmed three ways without the corrected script: by the panel, whose four lanes blink at 1 Hz in phase and could not if clk27 were 54 MHz; by hand arithmetic on a raw capture, where c27 advancing 0x1148 per line gives 4424 times 4096 over 2^25 equals 0.5400 times sys_clk and hk advancing 0x2F76 gives 1.4832; and by the record itself, since decoding with the corrected factor reproduces the 74.2452 MHz that `evidence/clock-smoke-readout.txt` recorded before entry 7 changed that factor. The design's own SDC had said 27 MHz for clk27 all along while the decoder reported 54 for the same net, and a constraint file and a measurement contradicting each other for five cycles went unreconciled. What this overturns is that the committed design was never doubled, and that the ODIV conclusion inverts: the field is a straight divisor, so 50 divides by 50 exactly as the design asks and 100 halves the output to 13.5 MHz, which is what entry 9's six power-cycled variant-B runs say when re-read through the corrected factor. The desktop core's `ODIV0_SEL = 100`, the workaround entries 10 and 11 landed, is therefore a two-times error that halves pll_27 to 13.5 MHz, halves pll_hdmi's reference, and puts hclk5 at 185.6 MHz instead of 371.25, half the TMDS bit clock, in the very bitstream loaded on 2026-10-09; it does not by itself crack the display, because entry 11 compared two pixel rates and the valid one was dark, but the current core now carries two defects and the known one should be removed before the unknown one is tested. Two smaller results are recorded rather than left. The hclk anomaly from entry 29 is bounded: the chaser's two builds reported hclk as zero while this panel and the two pre-chaser builds report it alive, with zero route errors and a timing pass in all four, so it is placement-dependent rather than design-dependent and remains unexplained in mechanism but reproducible and measurable. And the readout's `s=` field reads 0 on every line when it should alternate at 1.49 Hz, because `cnt_sys` is declared `reg [24:0]` and comes back as 24 flop cells so bit 24 is gone -- the same silent trim the RTL's own comment says `(* keep *)` was added to prevent, which it is evidently not preventing for that counter; nothing depends on the field today but it is recorded rather than left as a loose end. The decoder's message format changed with the design, so captures older than this cycle no longer parse, which is expected and is stated in the evidence; five evidence files that carry the two-times rates now open with a correction banner naming the factor, the inversion, and this entry. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 30 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Run the sweep, which is what the instrument was built for and is now a script rather than an investigation: change one PLL's divider, rebuild, load after a power cycle, and confirm the measured rate follows the request, one PLL at a time, with the UART as the number and the panel as the light; a rate that does not follow the request is the finding, and a rate that does is the capability the user asked to have established before the HDMI is touched. Then revert the desktop core's `ODIV0_SEL` from 100 to 50, because with the decoder corrected that value is a two-times error that halves its pll_27 and its hclk5, and it is in the core as committed; a rebuild and a reload there removes a known confound so that a dark screen means something new rather than something already understood. Keep the power-cycle rule on every load, since a load onto a running board produced a plausible and meaningless reading this session. The `(* keep *)` that is not holding for `cnt_sys` deserves a look the next time the readout is touched, and the readings corrected here -- the doubled clocks, the ODIV0 halving, and any conclusion drawn from either -- should not be re-walked in their original form.
+
+#### Files Modified:
+
+- fpga/clock-smoke/clock_smoke.v
+- fpga/clock-smoke/clock_smoke.cst
+- fpga/clock-smoke/clock_smoke.sdc
+- tools/decode-clock-smoke.py
+- evidence/clock-smoke-panel.txt
+- evidence/clock-smoke-divider-runs.txt
+- evidence/clock-smoke-six-runs.txt
+- evidence/clock-smoke-led-and-uart.txt
+- evidence/clock-smoke-chaser.txt
+- evidence/desktop-display-cycle.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

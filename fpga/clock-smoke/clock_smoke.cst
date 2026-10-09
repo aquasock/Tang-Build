@@ -47,3 +47,8 @@ IO_PORT "pmod1_io7" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
 // spelling.
 INS_LOC "pll_27" PLL_L[1];
 INS_LOC "pll_hdmi" PLL_L[3];
+
+// The desktop core pins its three PLLs to PLL_L[1], PLL_L[3] and PLL_B[1];
+// this design now holds the same trio.  PLL_B[1] is the site whose three PLLs
+// placed and routed with zero errors in the desktop core's own run.
+INS_LOC "pll_nes" PLL_B[1];

@@ -1,3 +1,16 @@
+# CORRECTED 2026-10-09: THE CLOCK RATES IN THIS FILE ARE TWICE THEIR TRUE VALUE.
+# tools/decode-clock-smoke.py multiplied the edge count by 8192, on the reading that
+# an edge count is a cycle count.  It is not: bit 12 has a period of 8192 cycles and
+# yields TWO edges per period, so the factor is 4096.  Every rate below is 2x high and
+# every "doubled" conclusion drawn from them is an artefact of that script.  The edge
+# counts themselves are sound and are what the correction was derived from.  See
+# evidence/clock-smoke-panel.txt and core-log entry 30.
+#
+# In particular the reading that ODIV0_SEL must be doubled INVERTS: the field is a
+# straight divisor, so 50 divides by 50 -- which is what the design asks for -- and
+# ODIV0_SEL=100 halves the output to 13.5 MHz.  Any workaround that changed 50 to 100
+# on the strength of these numbers is a 2x error.  See core-log entry 30.
+#
 # desktop core: packing it, and why the display is still dark
 
 ## 1. The flow fix -- string parameters from the slang front end

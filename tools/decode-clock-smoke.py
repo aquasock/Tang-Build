@@ -5,20 +5,29 @@
 
 The design (`fpga/clock-smoke/clock_smoke.v`) sends one fixed 49-byte line:
 
-    clock-smoke s=A lock=DE c27=XXXX hk=XXXX n=XXXX\\r\\n
+    clock-smoke s=A lock=DEF c27=XXXX hk=XXXX ns=XXXX n=XXXX\\r\\n
 
 once every 2^25 `sys_clk` cycles.  `D`/`E` are the pll_27 and pll_hdmi LOCK
 bits; `XXXX` values are hex.  `c27` and `hk` are COUNTS of bit-12 edges of
-`cnt_27` and `cnt_hclk`, which is what makes this measurable at all: a counter
-bit n toggles every 2^(n+1) cycles, so bit 12 toggles every 8192 and a count of
-its edges is a count of cycles, and the reader never has to know which bit was
-read.  Two earlier versions of this readout reported bits, and a bit's position
-cannot be recovered from a flop count.
+`cnt_27` and `cnt_hclk`, which is what makes this measurable at all: bit n has a
+PERIOD of 2^(n+1) cycles, so bit 12 has a period of 8192 cycles and yields TWO
+edges per period -- 4096 cycles of its clock per edge.  A count of its edges is
+therefore a count of HALF-cycles, and the reader never has to know which bit
+was read.  Two earlier versions of this readout reported bits, and a bit's
+position cannot be recovered from a flop count.
+
+An earlier version of this script multiplied by 8192, on the reading that an
+edge count is a cycle count.  It is not: that factor reported every clock at
+exactly twice its frequency, and it is why the committed design's `clk27` was
+recorded as doubled for several cycles.  The hardware was right; this script was
+not.  See `evidence/clock-smoke-panel.txt` and the `hclk` heartbeat that caught
+it -- a decoder-free instrument that blinks at 1 Hz, which is impossible if the
+clocks were doubled.
 
 THE RATIO IS THE MEASUREMENT.  For consecutive lines separated by exactly one
 `n`, the ratio
 
-    f / f_sys  =  d(edges) x 8192 / 2^25
+    f / f_sys  =  d(edges) x 4096 / 2^25
 
 needs no timing at all: the design's own line counter says how many line
 periods elapsed, and the line period is 2^25 sys_clk cycles by construction.
@@ -46,8 +55,8 @@ BAUD_DIV = 434       # sys_clk cycles per UART bit, from the RTL
 BIT = 12             # the counter bit whose edges are counted
 
 LINE_RE = re.compile(
-    rb"clock-smoke s=([01]) lock=([01])([01]) c27=([0-9a-f]{4})"
-    rb" hk=([0-9a-f]{4}) n=([0-9a-f]{4})\r\n")
+    rb"clock-smoke s=([01]) lock=([01])([01])([01]) c27=([0-9a-f]{4})"
+    rb" hk=([0-9a-f]{4}) ns=([0-9a-f]{4}) n=([0-9a-f]{4})\r\n")
 
 
 def per_line_edges(vals, ns):
@@ -89,7 +98,7 @@ def main():
         print("\nonly %d well-formed lines -- not enough to measure" % len(hits))
         return 1
 
-    ns = [int(h[5], 16) for h in hits]
+    ns = [int(h[7], 16) for h in hits]
     deltas = Counter((b - a) % 65536 for a, b in zip(ns, ns[1:]))
     print("lines   : %d;  d(n) values %s" % (len(hits), dict(sorted(deltas.items())[:5])))
     good = deltas.get(1, 0)
@@ -112,18 +121,19 @@ def main():
         print("  That is a real discrepancy in the design, not in this script -- it")
         print("  has been seen before.  The clock RATIOS below are unaffected.")
 
-    locks = Counter(h[1].decode() + h[2].decode() for h in hits)
-    print("\nPLL lock bits (pll_27, pll_hdmi): %s"
+    locks = Counter(h[1].decode() + h[2].decode() + h[3].decode() for h in hits)
+    print("\nPLL lock bits (pll_27, pll_hdmi, pll_nes): %s"
           % ", ".join("%s x%d" % (k, v) for k, v in locks.most_common()))
 
-    print("\nclocks, from counted bit-%d edges (8192 cycles each):" % BIT)
-    for name, idx, expect in (("clk27", 3, 27.00), ("hclk (CLKDIV output)", 4, 74.25)):
+    print("\nclocks, from counted bit-%d edges (4096 cycles each):" % BIT)
+    for name, idx, expect in (("clk27", 4, 27.00), ("hclk (CLKDIV output)", 5, 74.25),
+                              ("clk_nes", 6, 21.50)):
         vals = [int(h[idx], 16) for h in hits]
         epl, used, skipped = per_line_edges(vals, ns)
         if epl is None:
             print("  %-24s no usabled samples -- clock not running?" % name)
             continue
-        ratio = epl * (1 << (BIT + 1)) / (1 << CAD_BITS)
+        ratio = epl * (1 << BIT) / (1 << CAD_BITS)
         print("  %-24s %8.4f x sys_clk   (= %8.4f MHz at the anchor)"
               % (name, ratio, ratio * f_uart / 1e6))
         print("  %-24s %8.1f bit-%d edges per line, %d samples used, %d skipped"

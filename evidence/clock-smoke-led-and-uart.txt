@@ -1,3 +1,11 @@
+# CORRECTED 2026-10-09: THE CLOCK RATES IN THIS FILE ARE TWICE THEIR TRUE VALUE.
+# tools/decode-clock-smoke.py multiplied the edge count by 8192, on the reading that
+# an edge count is a cycle count.  It is not: bit 12 has a period of 8192 cycles and
+# yields TWO edges per period, so the factor is 4096.  Every rate below is 2x high and
+# every "doubled" conclusion drawn from them is an artefact of that script.  The edge
+# counts themselves are sound and are what the correction was derived from.  See
+# evidence/clock-smoke-panel.txt and core-log entry 30.
+#
 # clock-smoke on the board: a visible output and a verified UART report
 
 # Design:   fpga/clock-smoke/clock_smoke.v
