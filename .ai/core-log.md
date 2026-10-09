@@ -1056,3 +1056,33 @@ The panel is now the readout for the display work, which is what comes next: eac
 - User Test: PASS
 
 ---
+
+## 35 COMMIT Unreleased 2026-10-09T12:28:13-07:00
+
+#### Coming From:
+
+Unreleased 6545ee8
+
+#### Purpose:
+
+Check the desktop core for the one-hot FSM hazard the heartbeat exposed, revert its measured 2x clock defect, and take the corrected core to the board to see whether the display comes up.
+
+#### Outcome:
+
+Both fixes are now on the board and the display is still dark, which is a negative result that retires both of them. The FSM check came first and closed a branch: the synthesis log of the tree that built the core extracts four state machines -- `keyboard_link`, `keyboard_link2`, `sys_inst.desktop_endpoint.state` and `sys_inst.fdd_state` -- and yosys re-encodes all four ONE-HOT, which is the exact shape that killed the clock-smoke heartbeat. But every one of them carries a `<RESET STATE>` in its state encoding and the first input of each is `sys_resetn`, so they power up in a valid one-hot code; the hazard is one-hot WITHOUT a reset and the core has none. No rebuild was needed to establish that, because the log was already on disk beside the last build, and it is recorded as a negative rather than left unasked because a display pipeline is precisely where a dead state machine would have hidden. The divider came next. `ODIV0_SEL = 100` lived in `reconstruct.jhpQys/src/pll/gowin_pll_27.v`, in the tree that `source-path.txt` names as the one that built the core, so the workaround was live rather than stale; it is back to 50 and that file is now unmodified against upstream, so the workaround was its only edit there. The direction is settled by measurement rather than by the correction banner -- clock-smoke at 50 reads clk27 at 0.5400 x sys_clk = 27.0 MHz, which is what the design asks for, and at 100 reads 13.5 MHz -- and it is durable rather than local, because `ODIV0_SEL` appears nowhere in TinyTang's patch series, so a rebuild from the patches produces 50 on its own. The core was then built through the documented pipeline: `synth-desktop.sh` gives the netlist with the census the project expects, `CLKDIV 1`, `OSER10 3`, `ELVDS_OBUF 4`, `DPB 10`, `ALU 1096`; `pnr-desktop.sh` routes it with zero errors; and packing with the fork's apycula gives `desktop.fs` sha256 `882222d6ece66f0256f89ae10ba978e4d63e60bddba887f34d9acf198fc288e1`, 35,752,331 bytes. Before spending the board, the packed bitstream was checked offline with `iol-state.py`, which decodes the IOLOGIC attribute set from the fuses: the previously loaded build carried `CLKOMUX 61, OUTMODE 16, WRFCLKSEL 102` and NO `FCLKSEL` at all, the vendor's working build carries ten attributes including `FCLKSEL0` through `FCLKSEL3` and `HWL`, and this build carries seven -- `FCLKSEL1 81` and `FCLKSEL2 114` among them -- at all three serialisers. That is the lane selection genuinely present where it previously was absent, and it is the build FINDINGS section 7 describes as ready and never loaded. On the board the core runs: UART1 at 2 Mbaud returns a steady twelve-byte keylink frame about four times a second, so the system clock path, the fabric and the UART all work. The display is still dark, and the brief flash the monitor gives at load time is identical to previous loads, so it is the monitor reacting to configuration and carries no information. The consequence is the point of the cycle: the lane constraint is not sufficient, since with a lane selection at all three serialisers the display is still dark, and the 2x clock defect is not the cause, since with `pll_27` at the vendor's own 27 MHz and `hclk5` at the full 371.25 rather than half it is still dark. Neither is a dead FSM. One flow gotcha is recorded so it is not re-derived: `pnr-desktop.sh` passes nextpnr no `*_as_gpio` options, so the packer must be run without them too, and passing the vendor's six makes `gowin_pack` refuse with a conflicting-settings error, which is the packer working correctly rather than failing. The cycle also answered what to do with the desktop work, and the answer is that it already has a designed home: TinyTang carries `third_party/patches/` -- a nestang series 0001 through 0007 plus `desktop/0001-desktop-host.patch` -- applied by its own scripts, and the tree that built the core carries a nine-file, 662-insertion diff of that work as uncommitted changes in a scratch build directory, including untracked new files, with nothing in this repository holding it. That fragility is recorded in the evidence and left for now at the user's direction. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 35 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Two branches remain and the first is now the more valuable. Put the validated clock panel into the desktop core, so that the display clocks can be measured on silicon: every offline check agrees with the vendor -- the serialiser clock and pad configuration, the PLL frequencies -- and the two defects this cycle retired were both offline arguments, so the question that has never been asked is whether `clk27`, `hclk` and `hclk5` are actually running on the board, and the core has no readout with which to ask it. The panel answers it, the design is validated and regression-tested, the core's clock chain is the same trio clock-smoke already reports on, and its PMODs are driven through a personality register that gives the panel somewhere to live. Doing so needs the three PLL wrappers to export their `lock` signals, which they currently hide. The second branch is offline and cheaper: compare the fuses at the three TMDS tiles against the vendor's, which is what FINDINGS section 7 prescribes if the display is still dark, using the unpacker and the instruments under `/home/vash/tools/pnr-test`. Do not re-test the lane constraint or the 2x clock defect on the board, both retired here; do not claim the packer is at fault for refusing the `*_as_gpio` mismatch; and keep the power-cycle rule on every load. The desktop work's patch consolidation is recorded and deliberately deferred.
+
+#### Files Modified:
+
+- evidence/desktop-display-cycle.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: FAIL
+
+---

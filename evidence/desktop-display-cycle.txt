@@ -116,3 +116,97 @@ NO TMDS CLOCK AT ALL -- not timings it cannot use, but nothing.
     and needs the three INS_LOC PLL pins.
   - the fork's gowin_pack.py fix is a change in the apicula fork, not in
     this repository.
+
+## 7. Added after the LED panel was validated (same day, later)
+
+Two results, one negative and one a correction.
+
+**No dead FSM, and that branch is closed.**  The synthesis log of the tree that
+built the core already on disk extracts four state machines --
+`keyboard_link`, `keyboard_link2`, `sys_inst.desktop_endpoint.state` and
+`sys_inst.fdd_state` -- and yosys re-encodes all four one-hot, which is exactly
+the shape that killed the clock-smoke heartbeat.  But every one of them carries a
+`<RESET STATE>` in its state encoding and the first input of each is
+`sys_resetn`, so they power up in a valid one-hot code.  The hazard is one-hot
+*without* a reset, and the core has none.  Recorded because a display pipeline is
+precisely where a dead FSM would have hidden: if the display is dark, it is not
+this.
+
+**The `ODIV0_SEL` workaround is reverted.**  The tree that last built the core
+(`TinyTang/build/desktop/reconstruct.jhpQys`, the tree `source-path.txt` names)
+had `ODIV0_SEL = 100` in `src/pll/gowin_pll_27.v`; it is back to 50, and that
+file is now unmodified against upstream, so the workaround was its only edit
+there.  The direction is settled by measurement rather than by the banner:
+clock-smoke at `ODIV0_SEL = 50` reads `clk27` at 0.5400 x sys_clk = 27.0 MHz,
+which is what the design asks for, and at 100 reads 13.5 MHz.  The field divides
+as requested, so no packer fix is needed, and the bullet below -- "the requested
+ODIV still means half to the hardware" -- is superseded: what meant half was the
+decoder.  **The core has not been rebuilt since, so the bitstream loaded on
+2026-10-09 still carries 100**, and its `hclk5` is still 185.625 MHz rather than
+371.25 -- half the TMDS bit clock.
+
+**A durability warning beside both.**  The tree's own git diff is nine files and
+662 insertions -- the HDMI, packet-picker, nes2hdmi, iosys and OLED work -- and
+it lives as *uncommitted changes in a scratch build directory with a random
+suffix*.  Nothing in this repository carries it.  If that directory is cleaned,
+the desktop work goes with it, and the `ODIV0_SEL` revert just made would go with
+it too.  It wants a patch in this repository, the way `patches/0001` and `0002`
+already capture edits made outside it.
+
+## 8. The cheap test: both fixes exonerated (same day, later)
+
+The two fixes carried by this build were the lane selection and the `pll_27`
+divider.  Both are now on the board and the display is still dark, which
+retires both as causes.
+
+**Built through the documented pipeline.**  `scripts/synth-desktop.sh` on the
+working tree gives `nestang-top-open.json`, 7,689,984 bytes, with the census the
+project expects -- `CLKDIV 1`, `OSER10 3`, `ELVDS_OBUF 4`, `DPB 10`, `ALU 1096`.
+`scripts/pnr-desktop.sh` routes it with 0 errors.  Packing with the fork's
+apycula and no `*_as_gpio` options gives `.fs` sha256
+`882222d6ece66f0256f89ae10ba978e4d63e60bddba887f34d9acf198fc288e1`, 35,752,331
+bytes.
+
+**Offline acceptance, before loading.**  `iol-state.py` decodes the IOLOGIC
+attribute set from the packed bitstream, and the three serialisers read:
+
+```
+previously loaded build   CLKOMUX 61, OUTMODE 16, WRFCLKSEL 102            (3)
+this build                CLKOMUX 61, FCLKSEL1 81, FCLKSEL2 114,
+                          LSRIMUX_0 1, LSROMUX_0 1, OUTMODE 16, WRFCLKSEL 102  (7)
+vendor's working build    CLKOMUX 61, FCLKSEL0 79, FCLKSEL1 81, FCLKSEL2 114,
+                          FCLKSEL3 86, HWL 107, LSRIMUX_0 1, LSROMUX_0 1,
+                          OUTMODE 16, WRFCLKSEL 102                        (10)
+```
+
+So the lane selection is genuinely in the bitstream now, on all three
+serialisers, where the loaded build had none -- the build FINDINGS section 7
+describes as ready but never loaded.  The remaining difference from the vendor
+is the one already recorded as not a cause: they carry four `FCLKSEL` values and
+`HWL`, we carry two, and the decoder aliases `FCLKSEL` values onto the same
+fuses.
+
+**On the board.**  The core loads and is alive: UART1 at 2 Mbaud returns a steady
+twelve-byte keylink frame, `FC 00 09 08 00 00 00 00 00 00 00 00`, about four
+times a second.  So the system clock path, the fabric and the UART all work.
+The display is still dark, and the brief flash the monitor gives at load time is
+identical to before, so it is the monitor reacting to configuration and carries
+no information.
+
+**What that retires.**  The lane constraint is not sufficient: with a lane
+selection present at all three serialisers the display is still dark.  The 2x
+clock defect is not the cause: with `pll_27` at the vendor's own 27 MHz and
+`hclk5` at the full 371.25 MHz rather than half, the display is still dark.
+Neither is a dead FSM (section 7).  The open branches are the two FINDINGS
+section 7 named: the fuses at the three TMDS tiles, compared against the
+vendor's, which is offline work with the unpacker; and whether the display
+clocks are actually running on silicon, which no offline check can answer and
+which needs the readout the core does not have.
+
+**Flow gotcha, recorded so it is not re-derived.**  `scripts/pnr-desktop.sh`
+passes nextpnr no `*_as_gpio` options, so the packer has to be run without them
+too: passing the vendor's six (`mspi`, `ready`, `done`, `i2c`, `cpu`, `sspi`)
+makes `gowin_pack` refuse with "i2c_as_gpio has conflicting settings in nexpnr
+and gowin_pack", which is the packer working correctly.  Matching the vendor's
+pinout would mean passing the options to both tools, and the flow does not do
+that today.
