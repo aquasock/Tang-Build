@@ -755,3 +755,33 @@ Revisit entry 11's `LSRIMUX_0` removal, which this cycle's evidence contradicts,
 - User Test: N/A
 
 ---
+
+## 26 COMMIT Unreleased 2026-10-09T08:02:10-07:00
+
+#### Coming From:
+
+Unreleased 6dd72a3
+
+#### Purpose:
+
+Explain the anomaly entry 25 left open -- why forcing `HCLK_OUT0` appeared to produce `FCLKSEL1` 81 rather than 79 -- and record the state such that a successor can make the last change without re-deriving any of this.
+
+#### Outcome:
+
+The anomaly is explained and it is benign, and the constraint it was blocking is now grounded on the real variable. An instrumented pack logged what the packer computes at both stages: `set_iologic_bel_fclk` turns `IOLOGIC_FCLK` into `bel.fclk` and `fclk_select_attrs` turns that into the attribute-value pairs. For `HCLK_OUT0` it produces `bel.fclk='SPINE10'` and the pairs `FCLKSEL1=HCLK0` and `FCLKSEL2=HCLK0_`; for `HCLK_OUT2`, `SPINE12` with `HCLK2` and `HCLK2_`; for `HCLK_OUT1`, `SPINE11` with `HCLK1` and `HCLK1_`. So the packer maps lane to value correctly at every step and the `81`/`114` a decode reports for the lane-0 case is the decoder aliasing `FCLKSEL1` values 79 and 81 onto the same fuses -- which is also why `HCLK_OUT0` and `HCLK_OUT2` pack byte-identically. Neither nextpnr's `HCLK_OUT<n>` handling nor the packer's `_fclk_lane` needs changing; the value is what cannot be encoded. The constraint is therefore precise and measured: an IOLOGIC's fast clock can only be selected from lanes 0 and 2, because `FCLKSEL2` carries `HCLK0_` and `HCLK2_` and has no row for `HCLK1_` or `HCLK3_`; our serialisers are served by lanes 1 and 3, and their pairs are dropped, leaving the clock mux unselected. The vendor's serialisers use lane 2, the PLL's own lane. The change left is to constrain the serving wire in apicula's `gw5_hclk_arcs` and `gw5_create_hclk_iol_pip`, which is where `io2hclk` is built, so an IOLOGIC's FCLK can only come from a lane-0 or lane-2 wire. `evidence/desktop-clock-routing.txt` section 18 is now written as a handoff and carries the state, the exact change, the offline verification steps with their acceptance criteria, the instrument locations under `/home/vash/tools/pnr-test`, the traps that cost time in this session, and the list of readings already refuted so none is re-walked. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 26 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Make the one change section 18 of `evidence/desktop-clock-routing.txt` specifies -- constrain the IOLOGIC FCLK's serving wire to lanes 0 and 2 in `gw5_hclk_arcs` and `gw5_create_hclk_iol_pip` -- then rebuild the chipdb and nextpnr, re-place and re-pack, and decode the three OSER10s' attributes, with the acceptance criterion that they carry the vendor's ten attributes including all four `FCLKSEL` values rather than the three they carry now; section 18 lists the commands, the expected database and architecture hashes, and the router baseline of 3 `hclk5` dedicated-routing failures out of 947 to measure against. Do not change nextpnr's `HCLK_OUT<n>` handling or the packer's `_fclk_lane`, and do not re-walk the readings section 18 lists as refuted. Revisit entry 11's removal of `LSRIMUX_0` in the same pass, since the working vendor bitstream carries it and that removal is now contradicted. Nothing here needs the board until the bitstream carries the selection, at which point the desktop core can finally be loaded and looked at.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

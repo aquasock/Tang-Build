@@ -699,3 +699,84 @@ Note also, from the same comparison: `lsrimux_0` and `lsromux_0` are present
 in the working bitstream's serialisers and absent from ours, so the
 `LSRIMUX_0` fix of entry 11 removed one fuse and evidently did not restore the
 pair.
+
+==================================================================
+18. HANDOFF: state, the change left, and how to verify it
+==================================================================
+
+STATUS.  The desktop core is not implicated and has needed no change at any
+point.  Its bitstream is byte-reproducible (section 11), its pads, serialiser
+attributes, `FCLK`/`PCLK` connections and PLL frequencies all match a working
+vendor build, and the PLL is exercised end to end on silicon (section 14).  The
+display does not come up because the three TMDS serialisers are left with no
+clock selection, and the cause is now located in the flow rather than in the
+design.
+
+THE CAUSE, short.  An IOLOGIC's fast clock can only be selected from lanes 0
+and 2: `FCLKSEL2` carries `HCLK0_` and `HCLK2_` but has no row for `HCLK1_` or
+`HCLK3_`.  Our serialisers are served by lane 1 and lane 3 -- `io2hclk` puts
+`(102,181)` and `(100,181)` on lane 3 and `(57,181)` on lane 1 -- and nextpnr
+sources the FCLK from those, so the lane-1 and lane-3 pairs are dropped and the
+clock mux is left unselected.  The vendor's serialisers use lane 2, the PLL's
+own lane.
+
+THE CHANGE LEFT.  Constrain the serving wire in apicula's `gw5_hclk_arcs` /
+`gw5_create_hclk_iol_pip` (`apycula/chipdb.py`), which is where `io2hclk` and
+the `io2hclk`-derived arcs are built, so an IOLOGIC's FCLK can only come from a
+lane-0 or lane-2 wire.  Do not change nextpnr's `HCLK_OUT<n>` handling or the
+packer's `_fclk_lane`: the instrumented pack (core-log entry 26) shows both map
+lane to attribute-value correctly -- `HCLK_OUT0` to `HCLK0`/`HCLK0_`, `HCLK_OUT1`
+to `HCLK1`/`HCLK1_`, `HCLK_OUT2` to `HCLK2`/`HCLK2_` -- and it was the *value*
+that could not be encoded, not the mapping.  The `81`/`114` a decode reports for
+`HCLK_OUT0` is the decoder aliasing `FCLKSEL1` values 79 and 81 onto the same
+fuses, which is also why `HCLK_OUT0` and `HCLK_OUT2` pack byte-identically.
+
+HOW TO VERIFY, offline, no board.
+
+  1. rebuild the chipdb if the generator changed:
+       GOWINHOME=/home/vash/tools/gowin-1.9.11.03 \
+       PYTHONPATH=. python3 -m apycula.chipdb_builder GW5AST-138C \
+           -o apycula/GW5AST-138C.msgpack.xz
+     expected sha256 3cfbe062684bbb807f7b17a0434211dbd0f7be895f16afc7055fd974fec2a9df,
+     850,468 bytes.
+
+  2. rebuild nextpnr with the fork's apycula exported, or its embedded
+     architecture will be the published database:
+       NEXTPNR_BUILD=/home/vash/tools/nextpnr-mathieufro \
+       bash /home/vash/tools/rebuild-nextpnr.sh
+     confirm the configure line reads
+       -- Enabled Himbachel-Gowin devices: GW5AST-138C
+
+  3. re-place and re-pack, then decode the three OSER10s' attributes:
+       bash scripts/pnr-desktop.sh <tree> <netlist.json>
+       ... gowin_pack ... ; python3 /home/vash/tools/pnr-test/iol-state.py <fs>
+     ACCEPTANCE: the OSER10 sets read ten attributes, matching the vendor's
+       CLKOMUX 61  FCLKSEL0 79  FCLKSEL1 81  FCLKSEL2 114  FCLKSEL3 86
+       HWL 107  LSRIMUX_0 1  LSROMUX_0 1  OUTMODE 16  WRFCLKSEL 102
+     instead of the three they carry now.  The baseline to beat on the router
+     side is 3 `hclk5` dedicated-routing failures out of 947.
+
+INSTRUMENTS, all under /home/vash/tools/pnr-test.  `iol-state.py` logs what the
+unpacker decodes per IOLOGIC; `hclk-state.py` the same for HCLK blocks;
+`fclk-trace.py` logs what the packer computes for the FCLK lane;
+`fclksel-table.py` probes the device's own attribute table; `dump.sh` plus
+`dump-routing.py` produce the routing state; `calibrate-fclk.sh` forces each
+`HCLK_OUT` value and packs.  The recovered nextpnr is at
+`/home/vash/tools/nextpnr-mathieufro`, the clock-smoke bitstream at
+`/home/vash/tools/clock-smoke`.
+
+TRAPS THAT COST TIME, so they cost no more.  A misspelled `-DHIMBAEHCEL_*` is
+ignored by CMake with a warning, and the build then succeeds against the
+published database, which has no PLL for this device.  The suite's
+`environment` script unsets `PYTHONHOME`, so it must be set after sourcing.
+`scripts/pnr-desktop.sh` and `scripts/build-clock-smoke.sh` both need an env
+override for the fork's nextpnr and the latter still defaults to `/tmp`, which
+already cost one bitstream.  `add_attr_val` drops an attribute pair it cannot
+find without a word, which is why this took six cycles; the guard added in
+`patches/0002` refuses the clock-selection case now.
+
+DO NOT RE-WALK.  A missing `FCLK` (11), an unjoined HCLK node (13), a dropped
+general-fabric `FCLK` (13), the lane entry as *fabric-related* rather than
+lane-related (14, 21), `bel.fclk` being `None` (22), and the IOLOGIC table rows
+being absent (24) are all refuted above, with the measurement that refuted each
+recorded beside it.
