@@ -362,3 +362,33 @@ None.
 - User Test: FAIL
 
 ---
+
+## 13 COMMIT Unreleased 2026-10-09T01:22:58-07:00
+
+#### Coming From:
+
+Unreleased a8fe80f
+
+#### Purpose:
+
+Determine whether apicula's HCLK clock model for GW5AST-138C is missing the data the desktop core's display clock needs, and correct the mechanism entry 12 asserted.
+
+#### Outcome:
+
+This cycle went looking for missing HCLK data and found the clock model largely complete, so it ends with four refuted candidates and one correction rather than a fix. The model is real and present: the database regenerated from the local Gowin install carries `hclk_pips` 171, `io2hclk` 6, `hclk_div2` 6 and `HAS_5A_HCLK`, and nextpnr was built after it. The device has exactly six HCLK blocks, at `(27,0)`, `(27,181)`, `(81,0)`, `(81,181)`, `(108,64)` and `(108,117)`, and `gw5_hclk_idx` is a pure table lookup over those six returning `-1` everywhere else; the vendor's own `.fse` carries table-48 wiring only inside the block tiles, 159 to 165 entries each, against 0 on every interior tile tested on rows 81, 108 and 57. So there is no die-wide pip grid and the predicate that skips interior tiles loses nothing, which refutes the first candidate, missing interior spines, because there are none to miss. The HCLK lines are produced as `add_node` nodes rather than as pips, so searching `hclk_pips` for them returns nothing by construction, which refutes a second candidate that was an error of method rather than of device. `make_hclk_pip` registers both endpoints of every pip as nodes under the same name the producer uses, so the block at `(81,181)` and the IOLOGIC at `(102,181)` are joined by `create_global_nodes` under `HCLK3_HCLK30` and become one routable node, which refutes a third candidate about unjoined wires and a fourth about switch matrices being built only at the 171 pip sites, since the intervening tiles do not need one. The FCLK hooks are present at all three serialisers, `FCLKA <- HCLK30..33` at `(102,181)` and `(100,181)` and `FCLKA <- HCLK10..13` at `(57,181)`. The correction this entry owes is that entry 12 named the single `BUFG` as the cause of the clock failures, which its own evidence file already declined to establish and which the router's line `'hclk5' net was routed using global resources partially` contradicts, since a global path plainly existed; that mechanism is superseded and the mechanism is recorded as not established, with what survives being only that `hclk5` fails dedicated routing to all three serialisers. The one live lead is measured rather than inferred: `_gw5_hclk_logic_entry_wires` is `("CLK0", "CLK1", "CLK2", "LSR2")`, three tile clock wires and one ordinary fabric wire, and the comment on it, measured at `P1.T27` from the vendor's own bitstreams, records that a clock reaches lane 3 over fabric and never over the global plane; two of this design's three TMDS data serialisers are on lane 3 and the PLL at `X1Y81` is adjacent to block 2 at `(81,0)` and so feeds lane 2, which predicts both the symptom and the router's wording. It is deliberately not asserted, because the vendor's build works at the same three serialiser sites with the same forced PLL placement, so either the reading of that comment is incomplete or the vendor flow has something this one lacks. All four refuted candidates failed the same way, a real number read out of the wrong structure, since `hclk_pips`, `db.nodes`, the wire namespace and nextpnr's global node list each hold a different part of the HCLK data, and `evidence/desktop-clock-routing.txt` now records the refutations, the lane-3 lead and that method note so none of them has to be re-derived. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 13 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Compare the HCLK mux state decoded from the vendor's bitstream against this build's at the three serialiser FCLK inputs, which is like-for-like because both builds place those serialisers at the same three sites: `gowin_unpack` already reads `db.hclk_pips` as the block's configured and fuse-bearing mux state, so the comparison is available offline with no power cycle and needs no hardware. It either confirms the lane-3 reading or kills it, and until one of those happens the mechanism stays unestablished and no fix should be written against it. The `BUFG` mechanism entry 12 asserted is superseded by this entry and is not to be built on.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

@@ -100,3 +100,98 @@ to place and route as the vendor's does.
 The `pad_pll` key is 0 in this database as well, so the twelve PLL sites entry
 1 of the core log recorded are carried under different keys; the PLLs place,
 so whatever carries them works.
+
+==================================================================
+5. The clock model is more complete than this cycle assumed
+==================================================================
+
+This cycle went looking for the missing HCLK data and did not find it,
+because most of it is not missing.  Four candidate gaps were tested against
+the vendor's `.fse` and the database, and all four are refuted.  They are
+recorded here so that none of them is proposed again.
+
+  (a) "The interior horizontal spines are absent from the derived table."
+      REFUTED.  The device has six HCLK blocks, and `gw5_hclk_idx` is a pure
+      table lookup over exactly those six sites, returning -1 everywhere else:
+
+          0:(27,0)  1:(27,181)  2:(81,0)  3:(81,181)  4:(108,64)  5:(108,117)
+
+      The blocks carry 159 to 165 table-48 wire entries each.  Every interior
+      tile tested -- row 81 at columns 36/64/90/117/145/168, row 108 at
+      36/90/145/168, row 57 at 36/90/168 -- carries **0**.  The HCLK wiring
+      lives inside the block tiles; there is no die-wide pip grid, so the
+      predicate loses nothing by not visiting them.
+
+  (b) "The blocks do not produce the HCLK lines."
+      REFUTED, and the error was one of structure.  The lines are produced as
+      `add_node` nodes, not as pips:
+
+          dest = wnames.hclknames[30 + idx + hclk_idx * hclk_off]
+          add_node(dev, f'HCLK{hclk_idx}_{dest}', "GLOBAL_CLK", row, col, src)
+
+      Searching `hclk_pips` for them therefore returns nothing by
+      construction.  `HCLK30` is hclknames index 657, i.e. 96 + 3*187.
+
+  (c) "The producer and consumer wires are never joined."
+      REFUTED.  `make_hclk_pip` registers both endpoints of every pip as
+      nodes under the same name the producer uses:
+
+          add_node(dev, f'HCLK{hclk_idx}_{src}',  "GLOBAL_CLK", row, col, src)
+          add_node(dev, f'HCLK{hclk_idx}_{dest}', "GLOBAL_CLK", row, col, dest)
+
+      so `create_global_nodes` joins the block at (81,181) to the IOLOGIC at
+      (102,181) under `HCLK3_HCLK30`, and they become one routable node.
+
+  (d) "The switch matrix is built only at the 171 `hclk_pips` sites, so the
+      path crosses tiles that have no HCLK wiring."
+      REFUTED by (c): the wires are joined by node identity, not by name
+      coincidence, so the intervening tiles do not need their own matrix.
+
+The paths this design needs are present, and the FCLK hooks exist at all
+three serialisers:
+
+    (102,181) lane 3:  FCLKA <- HCLK30, HCLK31, HCLK32, HCLK33
+    (100,181) lane 3:  FCLKA <- HCLK30, HCLK31, HCLK32, HCLK33
+    ( 57,181) lane 1:  FCLKA <- HCLK10, HCLK11, HCLK12, HCLK13
+
+The PLL at X1Y81 is adjacent to block 2 at (81,0), so it feeds lane 2,
+while the serialisers read lanes 3 and 1.
+
+==================================================================
+6. The live lead: lane 3's clock entry is a fabric wire
+==================================================================
+
+    _gw5_hclk_logic_entry_wires = ("CLK0", "CLK1", "CLK2", "LSR2")
+
+Three of a block's four logic-to-HCLK entry wires are the tile's clock wires;
+the fourth, `LSR2`, is an ordinary fabric wire.  The comment on that constant
+records, MEASURED at `P1.T27` from the vendor's own bitstreams:
+
+    what makes lane 3 different from lanes 0-2: a clock reaches it over
+    fabric, never over the global plane
+
+Two of this design's three TMDS data serialisers are on lane 3, and the PLL
+feeds lane 2.  That predicts both the symptom (no usable 371.25 MHz clock at
+the serialisers) and the router's own wording, `'hclk5' net was routed using
+global resources partially` -- the last hop into lane 3 cannot be global.
+
+NOT SETTLED, and deliberately not asserted: the vendor's build works at the
+same three serialiser sites with the same forced PLL placement, so either the
+reading of this comment is incomplete or the vendor flow has something this
+one lacks.  The mechanism stays unestablished until that divergence is
+explained.  It is the first candidate here that is measured rather than
+inferred, and the inference is what has been wrong so far.
+
+==================================================================
+7. Why this cycle's hypotheses kept failing
+==================================================================
+
+All four refuted candidates failed the same way: a real number was read out
+of the wrong structure.  The HCLK data is spread over four of them --
+`hclk_pips` (fuse-bearing pips), `db.nodes` (routable nodes), the wire
+namespace (names), and nextpnr's generated global node list -- and a datum
+present in one is absent from another by construction.  Before inferring from
+the absence of an HCLK datum, establish which structure holds it.
+
+That is a note about method, not about the device: the fault is still real,
+still in the open flow, and still exactly where it was.
