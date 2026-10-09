@@ -1,0 +1,102 @@
+# The desktop core's clocks cannot be routed, which is why the display is dark
+#
+# Design:   nestang_top / the desktop core, via scripts/synth-desktop.sh and
+#           scripts/pnr-desktop.sh
+# Captured: /run/media/vash/GIT/TinyTang/build/desktop/reconstruct.jhpQys/
+#           .open-pnr/nextpnr.log        (place and route, 2026-10-09 00:11)
+#           .open-pnr/report.json        (same run)
+# Hardware: the same core loaded over two-wire `tangload` and answering on
+#           UART1 at 2000000 baud (evidence/desktop-2wire-cycle.txt), with the
+#           HDMI display dark and the monitor reporting "no signal".
+
+==================================================================
+1. What the device's database gives this design
+==================================================================
+
+Read out of apycula's GW5AST-138C database with msgpack + lzma:
+
+  key            GW5AST-138C (local, from the Gowin install)
+  pad_pll            0
+  hclk_pips        171
+  io2hclk            6
+  hclk_div2          6
+  chip_flags      HAS_5A_HCLK present, among others
+
+The clock model IS present: this is the database regenerated from the local
+Gowin 1.9.11.03 install, and nextpnr was built after it (database
+2026-10-08 14:16:35, fork binary 2026-10-08 14:26:06, both -0700), so the
+binary embeds it.  The published apicula 0.34 database has 0 of each of
+these, which is the difference the earlier P&R report recorded.
+
+The SDC is applied and nextpnr reads it:
+
+  Info: constraining clock net 'sys_clk' to 50.00 MHz
+  Info: constraining clock net 'clk' to 21.49 MHz
+  Info: constraining clock net 'hclk5' to 371.25 MHz
+
+==================================================================
+2. The routing that fails
+==================================================================
+
+947 lines of the form
+
+  Warning: Failed to route net '<net>' from <src> to <dst> using dedicated routing.
+
+break down by net as:
+
+  clk      943
+  hclk5      3
+  clk27      1
+
+Every one of the design's PLL-derived clocks fails dedicated routing.  The
+three `hclk5` failures are the whole display, because `hclk5` is the TMDS bit
+clock at 371.25 MHz and its only loads are the three output serialisers:
+
+  Failed to route net 'hclk5' from X1Y81/MPLLCLKOUT0 to X181Y102/FCLKA
+  Failed to route net 'hclk5' from X1Y81/MPLLCLKOUT0 to X181Y100/FCLKA
+  Failed to route net 'hclk5' from X1Y81/MPLLCLKOUT0 to X181Y57/FCLKA
+
+X181Y102, X181Y100 and X181Y57 are the three OSER10s, at the three TMDS data
+pads (rows 58, 101 and 103 of column 182; the vendor's build places them at
+the same three sites).  FCLKA is the serialiser's fast-clock input.  There is
+no fourth, because the TMDS clock lane is a plain differential output of the
+pixel clock and carries no serialiser.
+
+==================================================================
+3. Why no clock survives
+==================================================================
+
+  Info: 	                BUFG:       1/      1   100%
+
+The architecture this build places against offers ONE global clock buffer for
+the whole device, against a design that needs four clocks.  One of them can
+take the global network; the rest are left to general routing.  A clock
+carried by general fabric is good enough to count edges -- which is what
+clock-smoke measured, and why its 74.2452 MHz reading was true and still did
+not mean the clock was usable -- and it is not good enough to clock a
+serialiser at 371.25 MHz.
+
+This is coherent with everything else measured today, and each of those
+readings stays valid: the PLL configuration is right (pll_27 at ODIV0_SEL=100
+gives 26.9982 MHz and pll_hdmi at 4 gives 371.25 MHz, both reproduced 2/2 with
+power cycles), the placement matches the vendor's at every clock and
+serialiser cell, the pad configuration matches the vendor's tile by tile at
+all four TMDS pins, and the TMDS tiles' serialiser attributes match the
+vendor's apart from the LSRIMUX_0 that was fixed.  What fails is the delivery
+of the clock to those cells, not its generation, its configuration, or its
+destination.
+
+==================================================================
+4. What this does not establish
+==================================================================
+
+Which of the two clock-model gaps is load-bearing: the `hclk_pips` network
+being too sparse to carry the path from the PLL at X1Y81 to the serialisers
+at X181, or the single `BUFG` starving three of the four clocks of any global
+route at all.  Both are missing or incomplete data for this device rather
+than anything in the core, and both would have to be extended for the design
+to place and route as the vendor's does.
+
+The `pad_pll` key is 0 in this database as well, so the twelve PLL sites entry
+1 of the core log recorded are carried under different keys; the PLLs place,
+so whatever carries them works.

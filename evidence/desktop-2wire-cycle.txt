@@ -1,0 +1,28 @@
+=== desktop core, two-wire cycle, 2026-10-09T00:48:13-07:00 ===
+board: TinyTang CDC on /dev/ttyACM0, console state 1 (at shell prompt)
+control: vendor /cores/console138k/desktop.bin loaded by boot.tdsh at power-up
+test:    /cores/console138k/desktop-lsrimux.bin via tdsh run /scripts/desktop-lsrimux.tdsh
+
+opening /dev/ttyACM0
+$ fpga version
+fpga version
+fpga: core 84 answering on UART1 at 2000000 baud
+[1;32mroot@tinytang[0m:[1;34m~[0m# $ uptime
+uptime
+0 days 00:01:05
+[1;32mroot@tinytang[0m:[1;34m~[0m# $ tdsh run /scripts/desktop-lsrimux.tdsh
+tdsh run /scripts/desktop-lsrimux.tdsh
+loading /cores/console138k/desktop-lsrimux.bin
+tangload: programming the FPGA from /cores/console138k/desktop-lsrimux.bin
+Writing 4466048 bytes...ID=0001081b, status=00026220Erase: pollFlag...Erase: OKErase: disableCfg...Erase: disableCfg done...Erase: status=0x00000220
+Erasing again...ID=0001081b, status=00020638Erase: send 0x3F
+Erase: pollFlag...Erase: OKErase: disableCfg...Erase: disableCfg done...Erase: status=0x00020230
+Load SRAM
+Usercode=0x00000000, status=0x00026230
+tangload: core loaded
+tang.ini: pmod0 oledrgb, pmod1 none; word 0x0010
+tang.ini: sockets declared (0xc0 = 0x0010)
+fpga: core 84 answering on UART1 at 2000000 baud
+[1;32mroot@tinytang[0m:[1;34m~[0m# 
+
+=== cycle ended, 2026-10-09T00:48:36-07:00 ===

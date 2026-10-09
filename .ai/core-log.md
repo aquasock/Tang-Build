@@ -332,3 +332,33 @@ Put the display chain into the design that can talk. clock-smoke reports over th
 - User Test: FAIL
 
 ---
+
+## 12 COMMIT Unreleased 2026-10-09T01:09:09-07:00
+
+#### Coming From:
+
+Unreleased 9c25bb5
+
+#### Purpose:
+
+Find out why the desktop core's HDMI display has never come up, now that the core is known to load and run on the board.
+
+#### Outcome:
+
+The display cannot come up, and the reason is the device's clock routing rather than the core, which the two-wire test finally let the project observe with confidence. That cycle ran the vendor's core as a live control at the boot script's prompt and then replaced it with ours through `tangload` on the card's SD image; the load reported `core loaded`, the core answered `core 84 answering on UART1 at 2000000 baud` after a full SRAM erase, and the console returned to its prompt with no hang, while the display stayed dark and the monitor again reported "no signal" rather than a picture it cannot use. That rules out the overlay as the confound, which every earlier dark-screen observation had been unable to exclude, and it separates the two halves of the failure: the core runs, and only the display path is dead. The `.bin` path was eliminated in the same pass, because every earlier load had used the `.fs` over JTAG and two-wire is the first time this project's binary reaches `tangload`: `tools/fs-to-bin.py` reproduces the vendor's own `.bin` from the vendor's own `.fs` byte for byte (`c8406c7f8573097b98de3923def1693ffdd9f8fe304e224775249fc5f0e9c592`, `cmp` clean), `fpga_program` in `ports/bl616/tang_jtag_programmer.c` shifts file bytes straight to TDI without parsing any framing, and the vendor's 96-bit prologue that apicula omits is shown harmless because clock-smoke, which ran on this board, carries apicula's framing exactly. Two routes were then closed so they are not re-walked: `gowin_unpack` cannot decode this device's PLL attribute table at all, reporting `Unknown attr name for table: PLL code:211` against the vendor's bitstream as well as ours, so the PLL configuration cannot be read back from a bitstream; and the output-buffer count difference between the two unpacks is an artifact, because the HDMI outputs are `ELVDS_OBUF`, which is emulated LVDS built from single-ended halves and decodes as `OBUF_A`/`OBUF_B` pairs rather than a primitive of its own. What the P&R log actually contains is 947 `Failed to route ... using dedicated routing` lines, breaking down as `clk` 943, `hclk5` 3 and `clk27` 1, and the three `hclk5` failures are the whole finding: `hclk5` is the 371.25 MHz TMDS bit clock and its only loads are the three OSER10s at the TMDS data pads, `X181Y102`, `X181Y100` and `X181Y57`, so the serialisers never receive a fast clock and no valid TMDS leaves the part. Three clocks of this design cannot reach their loads on dedicated routing because the architecture offers a single global clock buffer, `BUFG: 1/1`, against four clocks, leaving three of them on general fabric; general routing is good enough to count edges, which is why clock-smoke's 74.2452 MHz reading was both true and insufficient, and it cannot clock a serialiser at 371.25 MHz. The clock model that does exist is real and current: the GW5AST-138C database regenerated from the local Gowin install carries `hclk_pips` 171, `io2hclk` 6, `hclk_div2` 6 and `HAS_5A_HCLK` where the published one has zero of each, and nextpnr was built ten minutes after that database so it embeds it, and the SDC is applied, since the log shows all three clocks being constrained. So the regeneration step this project had queued is already done and the remaining gap is the network's coverage and the global buffer count, not the tables' absence. Nothing in the core is implicated: the PLL configuration is correct, reproduced 2/2 with power cycles, at 26.9982 MHz for `pll_27` and 371.25 MHz for `pll_hdmi`; the placement matches the vendor's at every clock and serialiser cell; the pad configuration matches the vendor's tile by tile at all four TMDS pins; and the TMDS tiles' serialiser attributes match the vendor's apart from the `LSRIMUX_0` fixed in the previous cycle. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 12 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Extend the clock model for GW5AST-138C rather than the core, because the remaining gap is data about the device and not logic in the design: raise the global clock buffer count beyond the single `BUFG` the architecture currently admits and widen `hclk_pips` so the path from a PLL output to an output serialiser's `FCLKA` exists, both regenerated from the local Gowin 1.9.11.03 install that produced the current database, and then re-place the desktop core and check that the `hclk5` dedicated-routing failures are gone before packing and loading anything. Which of the two is load-bearing is not yet known and should be settled by the same log, since `BUFG: 1/1` starving three clocks and a sparse `hclk_pips` network both predict the observed failures and the fix for each is different. `evidence/desktop-clock-routing.txt` records the failures net by net and the database counts, and `evidence/desktop-2wire-cycle.txt` records the two-wire load, so that neither the dark-screen result nor the exclusions above has to be re-derived. The two dead ends recorded above, unpacked PLL attributes and the output-buffer count, should not be re-walked on this device.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: FAIL
+
+---
