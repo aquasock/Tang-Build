@@ -1,0 +1,57 @@
+# desktop core: ODIV0 50 -> 100, does the clock-smoke fix transfer?
+#
+# Tree: /run/media/vash/GIT/TinyTang/build/desktop/reconstruct.jhpQys
+#   reconstructed by TinyTang tools/build_desktop_core.sh --prepare-only,
+#   portability patch 0001-open-toolchain-portability.patch applied.
+# The only change made to the design, verified by git diff on the file:
+#   src/pll/gowin_pll_27.v   51-: defparam PLL_inst.ODIV0_SEL = 50;
+#                            51+: defparam PLL_inst.ODIV0_SEL = 100;
+
+SYNTHESIS  PASS
+  nestang_top: 8585 cells, PLL 3, CLKDIV 1, OSER10 3, ELVDS_OBUF 4,
+  DPB 10, ALU 1096 -- matching this project's recorded netlist.
+
+PLACE AND ROUTE  PASS
+  Program finished normally, 0 errors, 957 warnings (the design's own
+  successful run emitted 947 of the same dedicated-routing warnings).
+  Two obstacles had to be cleared first, both in scripts/pnr-desktop.sh:
+
+  1. It calls bare nextpnr-himbaechel from PATH, and sourcing the oss-cad
+     suite puts the suite's build first -- the one whose GW5AST-138C has no
+     placeable PLL bel.  That is what produces the script's 'known wall'
+     message, so that wall is at least partly stale tooling rather than a
+     limit of the open flow.
+  2. Even the fork's nextpnr cannot place three PLLs unconstrained.  The
+     chipdb knows all twelve PLL_{L,R,B}[n] sites, but the placer's free
+     choice does not find three it considers valid -- the same lesson
+     clock-smoke recorded.  Pinning them to the sites the vendor's own
+     place-and-route used let the run complete:
+         INS_LOC "pll_27.PLL_inst"   PLL_L[1];   (X0Y45)
+         INS_LOC "pll_hdmi.PLL_inst" PLL_L[3];   (X1Y81)
+         INS_LOC "pll_nes.PLL_inst"  PLL_B[1];   (X32Y108)
+     (script must run with SYNTH_DESKTOP_NO_ENV=1 and the suite's
+     environment sourced: the fork's embedded interpreter dies on
+     'encodings' with PYTHONHOME alone.)
+
+PACK  FAIL
+  apycula.gowin_pack -d GW5AST-138C raised:
+    Exception: The 11010100110000.0MHz frequency is outside the
+               permissible range of 3-800.0MHz.
+  That figure is garbage out of a 1350 MHz VCO divided by an ODIV of 100,
+  so the packer DECODES ODIV0_SEL rather than using it arithmetically, and
+  100 is not a value it can interpret in this PLL's attribute set.
+
+  Why it worked in clock-smoke and not here: the desktop PLL IP sets
+  ODIV1_SEL..ODIV6_SEL = 8 with CLKOUT1_EN..CLKOUT6_EN = FALSE, where
+  clock-smoke sets them to 0.  The same request is valid in one PLL and
+  not the other, so the effective halving is NOT a clean 'write twice the
+  value' encoding and the one-number fix does not transfer.
+
+BOARD
+  Not touched this cycle.  Nothing was loaded and the board is still
+  running variant B in SRAM from the six-run test.
+
+TIMING REPORT from the successful place and route, for the record:
+  clk                            77.00 MHz
+  desktop_sockets.pixel_clk     117.19 MHz
+  keyboard_link.clk             132.64 MHz

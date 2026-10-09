@@ -272,3 +272,33 @@ None.
 - User Test: NOT RUN
 
 ---
+
+## 10 COMMIT Unreleased 2026-10-08T23:00:03-07:00
+
+#### Coming From:
+
+Unreleased 028d3bf
+
+#### Purpose:
+
+Test whether the divider scaling found in clock-smoke transfers to the desktop core, where the display is the observable the line of work has been missing.
+
+#### Outcome:
+
+The fix does not transfer, and the attempt got further than the attempt itself. The design tree was reconstructed from the pinned nestang commit with the portability patch applied, and the only change made to the design was `defparam PLL_inst.ODIV0_SEL = 50` to `100` in `src/pll/gowin_pll_27.v`, verified by `git diff` on that file to be the whole of it. Synthesis passed at 8,585 cells with 3 PLL, 1 CLKDIV, 3 OSER10 and 4 ELVDS_OBUF, matching this project's recorded netlist. Place and route then failed twice before it passed, and both failures were in `scripts/pnr-desktop.sh` rather than in the design or the tools. It calls bare `nextpnr-himbaechel` from PATH, and sourcing the oss-cad suite puts the suite's build first, the one whose GW5AST-138C has no placeable PLL bel, so the script's "known wall" message is at least partly stale tooling rather than a limit of the open flow. And even the fork's nextpnr cannot place three PLLs unconstrained: the chipdb knows all twelve `PLL_{L,R,B}[n]` sites but the placer's free choice does not find three it considers valid, which is the same lesson clock-smoke already recorded. Pinning them to the sites the vendor's own place-and-route used, `PLL_L[1]` at X0Y45, `PLL_L[3]` at X1Y81 and `PLL_B[1]` at X32Y108, let the run complete with `Program finished normally`, 0 errors and 957 routing warnings against the 947 the design's own successful run emitted. Packing then failed on the change itself: `gowin_pack` raised that the 11010100110000.0MHz frequency is outside the permissible range of 3 to 800 MHz, a garbage figure out of a 1350 MHz VCO divided by an ODIV of 100. So the packer decodes `ODIV0_SEL` rather than using it arithmetically, and 100 is not a value it can interpret in this PLL's attribute set, while clock-smoke's `pll_27` accepted the same request and ran at the designed 27 MHz. The difference between the two is the fields around it, the desktop IP setting `ODIV1_SEL` to `ODIV6_SEL` to 8 with those outputs disabled where clock-smoke sets them to 0, so the effective halving is not a clean write-twice-the-value encoding and the one-number fix is not the fix. A second script defect was found the same way: the fork's nextpnr needs the suite environment sourced rather than `PYTHONHOME` set alone, or its embedded interpreter dies on `encodings`, and `SYNTH_DESKTOP_NO_ENV=1` must be set or the script re-sources the suite and clobbers the fork on PATH, which is what produced a spurious "Invalid constraint" on a `PLL_L[1]` macro that the fork accepts. The board was not touched this cycle, nothing was loaded, and it still runs variant B in SRAM. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and `core-log.md` was, and validated this entry as number 10 of the active log with a conforming header, six sections in canonical order, prose in Outcome and Next Steps, and an allowed Status set. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Map which `ODIV0_SEL` values the packer actually accepts and what the decode is doing, off-board and on the desktop PLL IP rather than on clock-smoke's, since the rejection is a decode failure rather than a range check on the divider and the effective halving is not a simple scaling. In parallel, fix `scripts/pnr-desktop.sh`: it should select the fork toolchain explicitly instead of taking whatever `nextpnr-himbaechel` is first on PATH, should set `SYNTH_DESKTOP_NO_ENV` and source the suite for the embedded interpreter, and should carry the three `INS_LOC` lines, because the desktop core cannot be placed without them and the current script silently uses a nextpnr that cannot place a PLL at all. That script fix is worth doing even before the divider question is settled, since it is the difference between a build that runs and one that stops at a wall that is no longer there. Only once a packable configuration exists is the display testable, and the board should be left alone until then; `evidence/desktop-odiv100-attempt.txt` records the run.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: FAIL
+- Deployment: NOT RUN
+- User Test: NOT RUN
+
+---
