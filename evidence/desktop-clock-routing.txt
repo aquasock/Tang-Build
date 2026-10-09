@@ -440,10 +440,48 @@ unusable here, and therefore that a serialiser clocked from lane 3 gets a
 smear rather than a bit clock.  The physics is sound and the vendor's choice
 points the same way, but nothing here has put a probe on the pin.
 
-CAVEAT ON THE REFERENCE.  The vendor bitstream compared is
-`TinyTang/build/desktop/source/impl/pnr/desktop.fs`, whose `.bin`
-(`c8406c7f...`) is NOT the file that runs on the card (`desktop.bin`,
-`4fcc62e6...`).  It is a Gowin build of the same source with the same pin
-constraints, which is what makes a per-site configuration comparison valid,
-but its own display has not been confirmed working.  A comparison against the
-card's image would be stronger, and that image is only on the SD card.
+CAVEAT ON THE REFERENCE.  RESOLVED by section 13.
+
+==================================================================
+13. Confirmed against the bitstream that drives a working display
+==================================================================
+
+The card itself is not mounted, but the bitstream it carries is in the tree.
+Three files under `TinyTang/build/oled-terminal/` hash to
+`4fcc62e6570805b4ea02fb7356c3344e7df90ad980bfe78c66475f1245439873`, which is
+the `desktop.bin` on the SD card, and one of them sits in a full Gowin build
+tree with its `.fs` beside it:
+
+    TinyTang/build/oled-terminal/sweep-blockfix/reconstruct.qb3T82/
+        impl/pnr/desktop.{bin,fs}        (.bin = 4fcc62e6..., 4,463,306 bytes)
+
+The other two are `sweep-blockfix/place2/desktop.bin` and
+`qualify/desktop-blockfix.bin`.  So the reference no longer depends on the card
+and, more to the point, it is now the file that demonstrably drives a working
+display rather than a build of unknown provenance.
+
+Decoded with the same wrapped `parse_hclk_block`, its block at `(81,181)` is:
+
+    CLKDIV_0: DIV_MODE="5"
+    HCLK3:    HCLK_MUX_GAMMA30="HCLK_UNK581"
+              HCLK_MUX_ALPHA30="HCLK_BUF_BO30"
+
+IDENTICAL to the tree's other Gowin build and DIFFERENT from ours.  Two
+independent Gowin builds agreeing with each other is what settles it: the
+difference is not a build-to-build artifact, and it is not an artifact of
+comparing against the wrong bitstream either.  Section 12's vendor reading was
+of `source/impl/pnr/desktop.fs`, whose `.bin` is `c8406c7f...` and is a
+different build from the card's `4fcc62e6...`; both decode to the same lane-3
+state.  Every other block site decodes to `{}` in all three bitstreams,
+including `(81,0)`, lane 2's block beside the PLL.
+
+What this establishes, and what it does not.  ESTABLISHED: the working
+bitstreams drive lane 3's clock over the dedicated HCLK network, selecting the
+inter-HCLK wire `HCLK_UNK581`; ours selects `L2HCLK`, the logic-to-HCLK entry,
+which is fabric; the CLKDIV slot differs likewise, `CLKDIV_0` against
+`CLKDIV_3`; and nextpnr's 3 dedicated-routing warnings for `hclk5` are the
+moment it gave up and fell back.  `gowin_pack` encoded that fallback
+faithfully.  STILL INFERRED, NOT MEASURED: that a fabric clock is what makes
+371.25 MHz unusable here.  The physics and now two vendor builds' choice both
+point that way, but nothing here has put a probe on the pin, and the inference
+should not be written up as the finding.

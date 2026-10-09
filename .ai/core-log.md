@@ -575,3 +575,33 @@ None.
 - User Test: N/A
 
 ---
+
+## 20 COMMIT Unreleased 2026-10-09T06:42:35-07:00
+
+#### Coming From:
+
+Unreleased 3a314d1
+
+#### Purpose:
+
+Decode the bitstream that actually drives a working display and settle whether entry 19's lane-3 difference holds against it, since that entry's whole reading rested on a vendor build of unconfirmed provenance.
+
+#### Outcome:
+
+The difference holds, and the caveat that limited it is retired. The card was not mounted, but the bitstream it carries is in the tree: three files under `TinyTang/build/oled-terminal/` hash to `4fcc62e6570805b4ea02fb7356c3344e7df90ad980bfe78c66475f1245439873`, which is the `desktop.bin` on the SD card, and one of them sits in a full Gowin build tree with its `.fs` beside it, `sweep-blockfix/reconstruct.qb3T82/impl/pnr/desktop.{bin,fs}`, with `sweep-blockfix/place2/desktop.bin` and `qualify/desktop-blockfix.bin` the other two. Decoded with the same wrapped `parse_hclk_block`, its block at `(81,181)` is `CLKDIV_0: DIV_MODE="5"` and `HCLK3` with `HCLK_MUX_GAMMA30="HCLK_UNK581"` and `HCLK_MUX_ALPHA30="HCLK_BUF_BO30"` -- IDENTICAL to the tree's other Gowin build, which entry 19 compared and whose own display was unconfirmed, and DIFFERENT from ours, which selects `L2HCLK` on both BETA muxes with `CLKDIV_3`. Two independent Gowin builds agreeing with each other is what settles it: the difference is not a build-to-build artifact, and it is not an artifact of having compared against the wrong bitstream, because the reading of `source/impl/pnr/desktop.fs` at `c8406c7f...` and the reading of the card's file at `4fcc62e6...` are the same. Every other block site decodes to `{}` in all three bitstreams, including `(81,0)`, lane 2's block beside the PLL, so that is confirmed as not a difference. What is established is the difference and its direction: the working bitstreams drive lane 3's clock over the dedicated HCLK network by selecting the inter-HCLK wire `HCLK_UNK581`, ours selects the logic-to-HCLK entry `L2HCLK`, which is fabric, the CLKDIV slot differs likewise, and nextpnr's 3 dedicated-routing warnings for `hclk5` are the moment it gave up and fell back -- with `gowin_pack` then encoding that fallback faithfully, so the bitstream is not lying about the route. What is still inferred and not measured is that a fabric clock is what makes 371.25 MHz unusable here; the physics and two vendor builds' choice both point that way, but nothing has put a probe on the pin, and `evidence/desktop-clock-routing.txt` section 13 keeps the two apart exactly as section 12 did. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 20 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Attack the fallback rather than the core, because the defect is now located in the flow and not in the design: nextpnr must carry the PLL's clock to lane 3 over the inter-HCLK network instead of giving up at the three warnings and routing it through fabric, and the question to settle first is why the dedicated path is not found when the arcs for it exist in the chipdb and `create_hclk_switch_matrix` creates the pip -- whether the inter-HCLK arcs between the blocks are missing from the generated architecture, or present and unusable because the router cannot reach the block that would source them. `--test` reports the architecture database as integral, so it is not malformed data; the generator and the router are the two places left. If that turns out to need upstream work rather than a patch here, say so in the next entry rather than widening this one. The desktop core still needs no change, the three earlier candidates -- a missing `FCLK`, an unjoined HCLK node, and a dropped general-fabric `FCLK` -- should not be re-walked, and a fabric clock at 371.25 MHz should not be written up as measured until something measures it.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---
