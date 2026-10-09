@@ -695,3 +695,33 @@ None.
 - User Test: N/A
 
 ---
+
+## 24 COMMIT Unreleased 2026-10-09T07:32:38-07:00
+
+#### Coming From:
+
+Unreleased fccbfb1
+
+#### Purpose:
+
+Calibrate which `HCLK_OUT` values the IOLOGIC clock selection can actually encode, land the packer guard that makes the silent drop impossible, and capture the fork edit durably.
+
+#### Outcome:
+
+The calibration ran and changed what the fix has to be, and the guard is landed and verified. Four packs of the same routed netlist, each with the three serialisers' `IOLOGIC_FCLK` forced to one value, give: `HCLK_OUT0` and `HCLK_OUT2` both produce `FCLKSEL1` 81 = `HCLK2` and `FCLKSEL2` 114 = `HCLK2_` and are byte-identical to each other, sha `e77ff5b8...`; `HCLK_OUT1` and `HCLK_OUT3` produce neither, sha `ec6baf2a894a8b6c3f991874d969b27ff5bab391a26d8440d85efe39dc80b6f1`, which is the hash of the bitstream that was loaded on the board. The control therefore validates the method exactly: forcing the value the flow actually chose reproduces the as-built bitstream byte for byte, so the calibration measures the real thing rather than a model of it. Even values encode, odd values do not, and the mapping is many-to-one because two different even values give the same output -- which is why the rule is a table and not the block-minus-one that entry 23's next step guessed at, and why guessing it would have been wrong. The second result is that even the encoding value does not reproduce the vendor's set: the working serialisers carry ten attributes including `FCLKSEL0` 79, `FCLKSEL3` 86, `HWL` 107, `LSRIMUX_0` 1 and `LSROMUX_0` 1, and the good lane still yields only `FCLKSEL1`, `FCLKSEL2` and `WRFCLKSEL`. So the packer is incomplete for this device across several IOLOGIC attributes, not merely on the lane, and entry 23's note that the vendor's bitstream disproves the "no `FCLKSEL0`/`FCLKSEL3` row" comment is joined by a second instance of the same thing. The guard was then written in the fork's `get_iologic_attr_val`, and its first form was wrong: refusing every pair `add_attr_val` cannot find also refused `LSROMUX_0`, which the working vendor bitstream carries and these tables do not, and that stopped the one lane that packs from packing. That refusal is itself the second instance -- the tables are incomplete in both directions -- and it scoped the guard to the `FCLKSEL` attributes, where dropping a value leaves a cell with no clock and nothing says so. Verified both ways: the netlist as routed now raises `IOLOGIC FCLKSEL2='HCLK1_' is not encodable on GW5AST-138C`, naming the pair and the consequence, and the `HCLK_OUT2` variant still packs to 35,752,331 bytes. The fork edit is captured as `patches/0002-iologic-refuse-unencodable-clock-selection.patch`, 25 insertions and one deletion, because a fork working tree is as losable as `/tmp` was and this project already carries its design edits as patches. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 24 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Complete the packer's IOLOGIC attribute coverage for this device, which the guard has now shown to be the real defect and whose shape is known: `LSROMUX_0`, `LSRIMUX_0`, `HWL`, `FCLKSEL0` and `FCLKSEL3` are all carried by a working vendor bitstream and absent from these tables, so the work is to find their fuse rows and populate them, the way the PLL pump constants were measured from vendor bitstreams rather than derived. The vendor builds already in the tree are the reference and the guard makes the work safe, because anything still missing will refuse instead of vanishing. Which of those five actually matter for the display is not known and should be settled by repacking and comparing, not by assuming that matching the vendor's attribute list is the same as matching its behaviour. The lane question is subordinate to this: once the tables are complete, an odd `HCLK_OUT` will either encode or refuse loudly, and either answer is better than the silent drop that cost six cycles. The desktop core still needs no change, and nothing in this cycle touched the board.
+
+#### Files Modified:
+
+- patches/0002-iologic-refuse-unencodable-clock-selection.patch
+
+#### Status:
+
+- Build: PASS
+- Deployment: N/A
+- User Test: N/A
+
+---
