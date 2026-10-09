@@ -485,3 +485,75 @@ faithfully.  STILL INFERRED, NOT MEASURED: that a fabric clock is what makes
 371.25 MHz unusable here.  The physics and now two vendor builds' choice both
 point that way, but nothing here has put a probe on the pin, and the inference
 should not be written up as the finding.
+
+==================================================================
+14. clock-smoke's lane 3 is fabric too, and it was measured working
+==================================================================
+
+clock-smoke was rebuilt with the recovered toolchain and its bitstream is
+BYTE-IDENTICAL to the one whose clock readings are recorded:
+
+    /home/vash/tools/clock-smoke/clock-smoke.fs
+    sha256 78227dd66d75521230be62e1efbc1d2ba84119ebad993ac6aa4c8701820f23ea
+    recorded for the measured clock-smoke: the same, 34,668,145 bytes
+
+So the decode below is of the design that measured 26.9982 MHz on `clk27` and
+74.2452 MHz on `hclk` on real silicon, 2/2 with power cycles, with the PLL lock
+bits reading 11 throughout.  Its block at `(81,181)`, the same site:
+
+    CLKDIV_3: DIV_MODE="5"
+    HCLK3:    HCLK_MUX_BETA33="L2HCLK33"
+              HCLK_MUX_ALPHA33="HCLK_BUF_BO33"
+              HCLK_BUF_BI33="HCLK_MUX_BETA33"
+
+This is OURS, not the vendor's.  `CLKDIV_3` and `L2HCLK33` -- the
+logic-to-HCLK, fabric entry -- are exactly what the desktop core's bitstream
+carries, and what the two Gowin builds do not.
+
+TWO THINGS FOLLOW, and the second is the stronger.
+
+First, the lane-3 difference is a property of the open flow rather than of this
+core.  A design built the same way, which is known to work on this board, has
+the same entry.  It is a real difference from Gowin's output and it is not the
+reason the display is dark.
+
+Second, and measured rather than inferred: `hclk` is the `CLKDIV_3` OUTPUT.
+For it to read 74.2452 MHz, the divider's input -- 371.25 MHz -- had to arrive
+through that same fabric entry and be divided correctly.  So a 371.25 MHz clock
+carried by the fabric entry is usable on this silicon at least as far as a
+CLKDIV.  Sections 12 and 13's inference that a fabric clock is what makes
+371.25 MHz unusable does not survive this; it is retracted here rather than
+left standing.
+
+What clock-smoke does NOT show: it has no OSER10, so it says nothing about
+whether a clock on that entry can drive a serialiser's `FCLK`.  That is the
+remaining gap between the two designs.
+
+==================================================================
+15. What the open-flow bitstreams agree on, and what is left
+==================================================================
+
+Three bitstreams have now been decoded at `(81,181)`:
+
+    clock-smoke      CLKDIV_3  L2HCLK33 (fabric)      measured working, 74.2452 MHz
+    desktop core     CLKDIV_3  L2HCLK31, L2HCLK33     dark
+    Gowin x2         CLKDIV_0  HCLK_UNK581 (HCLK)     working
+
+The two open-flow builds agree with each other and differ from Gowin.  One of
+them is measured working, so that difference is not a cause.  Everything else
+compared between our bitstream and a working one has matched: the pad
+configuration at all four TMDS pins, the TMDS tiles' serialiser attributes
+barring the `LSRIMUX_0` that was fixed, the `FCLK` and `PCLK` connections and
+their source wires, and the PLL frequencies.
+
+So the display's cause is not in any of those, and the search returns to the
+one place where the open flow has something Gowin's does not have to get right
+in the same way: the serialiser's own use of `FCLK`.  clock-smoke drives a
+CLKDIV from that entry and works; the desktop core drives three OSER10s from
+the same entry and does not.  The next thing to compare is therefore the
+OSER10 cells themselves -- their clock selection and gearbox configuration --
+between our bitstream and a working one, and that comparison has not been made.
+
+Refuted and not to be re-walked: a missing `FCLK` (11), an unjoined HCLK node
+(13), a dropped general-fabric `FCLK` (13), and -- retracted here -- the fabric
+lane entry as the cause (14).

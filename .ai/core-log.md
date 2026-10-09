@@ -605,3 +605,33 @@ None.
 - User Test: N/A
 
 ---
+
+## 21 COMMIT Unreleased 2026-10-09T06:48:18-07:00
+
+#### Coming From:
+
+Unreleased 8d11ffb
+
+#### Purpose:
+
+Rebuild clock-smoke and decode its HCLK block, to settle whether the lane-3 entry that entries 19 and 20 pointed at is really the cause and to close the question of whether the PLL's encoding is sound.
+
+#### Outcome:
+
+It closes the PLL question in the strongest form yet, and it retracts the lane-3 direction. clock-smoke was rebuilt with the recovered toolchain, and its bitstream is byte-identical to the one whose readings are recorded -- `78227dd66d75521230be62e1efbc1d2ba84119ebad993ac6aa4c8701820f23ea`, 34,668,145 bytes, both matching -- so the decode is of the design that measured 26.9982 MHz on `clk27` and 74.2452 MHz on `hclk` on real silicon, 2/2 with power cycles and the PLL lock bits reading 11 throughout. Decoded at `(81,181)`, the same site, its block reads `CLKDIV_3: DIV_MODE="5"` and `HCLK3: HCLK_MUX_BETA33="L2HCLK33"` -- which is OURS, not the vendor's, and the same `CLKDIV_3` and `L2HCLK` fabric entry the desktop core carries. Two things follow and the second is stronger. The lane-3 difference is a property of the open flow rather than of this core, because a design built the same way and known to work on this board has the same entry, so it is a real difference from Gowin's output and it is not why the display is dark. And `hclk` is the `CLKDIV_3` OUTPUT: for it to read 74.2452 MHz the divider's input, 371.25 MHz, had to arrive through that same fabric entry and be divided correctly, which is a measured datum that a 371.25 MHz clock on the fabric entry is usable on this silicon at least as far as a CLKDIV. The inference entries 19 and 20 carried -- that a fabric clock is what makes 371.25 MHz unusable -- does not survive that and is retracted here rather than left standing. On the PLL itself this is the best evidence the project has: the fuse encoding is exercised end to end through a real design, at two frequencies, on the board, with both PLLs locking, and none of tonight's findings places any part of it in doubt -- the differences found are all in the clock network and in routing, not in the PLL. What clock-smoke cannot show is whether a clock on that entry can drive a serialiser's `FCLK`, because it has no OSER10, and that is now the remaining gap between the two designs: the three open-flow and Gowin bitstreams decoded at `(81,181)` are recorded in the evidence, and everything else compared with a working one has matched. Two smaller findings from running the build script: it defaults `NPNR` to `/tmp/tb/npnr-build`, the path lost to `/tmp` being cleared, and its default output directory is `/tmp/tb/clock-smoke`, which is why the previous clock-smoke bitstream had to be rebuilt rather than read; both are instances of the hazard entry 16 fixed in `pnr-desktop.sh` and neither was changed in this cycle. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 21 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Compare the OSER10 cells between our bitstream and a working one -- their clock selection and gearbox configuration -- because that is now the only place the two designs differ in kind: clock-smoke drives a CLKDIV from the fabric entry and is measured working, while the desktop core drives three OSER10s from the same entry and is not, and clock-smoke has no serialiser to test that last hop with. The comparison is the same shape as the ones that have already been made and it has not been run; `FCLK` naming `HCLK0` in both builds is established, but what the serialiser does with it internally is not. Repair `scripts/build-clock-smoke.sh` in the same pass, since its `/tmp` defaults reintroduce exactly the hazard that lost the last bitstream, and record the rebuilt bitstream's hash beside the readings it belongs to. The desktop core still needs no change, and the retracted and refuted candidates should not be re-walked.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: PASS
+- Deployment: N/A
+- User Test: N/A
+
+---
