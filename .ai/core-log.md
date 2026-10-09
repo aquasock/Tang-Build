@@ -1024,3 +1024,35 @@ Make all eight lanes look good together, which is what qualifies the LED PMOD as
 - User Test: PASS
 
 ---
+
+## 34 COMMIT Unreleased 2026-10-09T12:10:35-07:00
+
+#### Coming From:
+
+Unreleased 77cd3c4
+
+#### Purpose:
+
+Make all eight lanes read as one panel, and settle what this LED socket can and cannot express.
+
+#### Outcome:
+
+All eight lanes now pass and the panel is the instrument the display work will be read with. The four beat lanes are unchanged -- four clocks, each beating from its own clock, brightness `env/256` -- and the four lanes that used to be leftovers now do something: the three lock lanes echo the beat, the same sound single and crisp, each beginning later than the last at 550, 700 and 850 ms so the three ring down through the dark half of the second, each still clocked by its own clock and each gated by its own lock at the pin so an unlocked PLL goes dark rather than lying; and the spare lane breathes, a four-second triangle. Making that work added three parameters to `heartbeat` -- `DELAY_MS`, `S2_EN` to switch the second sound off, and `FALL` so a ping can decay faster than a heart -- and the carrier counter widened from eight bits to sixteen, which is the lane's clock over 65536 and puts the carrier at 328 to 1133 Hz with no prescaler at all. Measuring what the lights can express turned into the real content of the cycle, and it went through a wrong answer first. Four steady lanes at 6, 25, 50 and 100 per cent duty are rated by eye at 70, 80, 90 and 100 per cent brightness, so the top of the duty range collapses into the top third of the perceived range, and the obvious conclusion was that the envelope should be mapped into a lower duty band. A ladder of peaks at 1.6, 3.1, 6.2 and 12.4 per cent was built to find that band, and it was a dead end: the spare lane's four-second triangle at a 6.2 per cent peak is reported as fading properly from zero to full, which shows that a fade from off to on reads as a full excursion at any peak and that the duty range is not the variable that matters. Brightness was therefore set back to the `env/256` the user had already accepted, and what remains true from that detour is that the real constraint is time -- a brightness change has to outlast the eye's integration window, which is exactly why a 64 ms decay was invisible and a 255 ms one is not. What the cycle found instead was a defect, on the board report that lanes 6 and 7 were dead while lane 5 blinked: the state machine's second-sound gate is `phase >= S2_ONSET + DELAY_MS`, so a lane whose delay pushes that sum past the end of the second never leaves `WAIT2` and blinks exactly once, at power-up, and the 550 ms lane survives only because 952 is still inside the second. With the second sound switched off, `WAIT2` is now a single-tick state that returns straight to the start. That defect had passed the regression, which is the more useful lesson: the test only checked the delayed lane's first onset, and when a check was added for the second beat it was verified to fail against the old code rather than assumed to catch it -- and it did not fail, at first, because the test's delayed lane used a 550 ms delay, which is inside the second and therefore passes on the broken design. It now uses 700 ms, the delay that actually failed, and reports the second onset at 1702 ms where the broken version reports -1. The delivered artifact is `/home/vash/tools/clock-smoke/clock-smoke.fs`, sha256 `47ea82c309d87697d9656f72e06b03ca88be7747f3d5aaff8ff1c94e2218018b`, with no timing failures and no FSM extracted; the user reports all eight lanes passing and names the panel the LED validation to carry into the display work. The `hclk` counter again reads `hk=0000` in this placement, the placement-dependent anomaly already recorded, with `lock=111` throughout, and the UART's `s=` field continues to report the envelope's ramp directly rather than a stuck sanity bit. `evidence/led-pmod-validation.txt` records what the socket can express, what it cannot, and the two defects this panel found, so the next cycle starts from the measurement instead of the argument. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 34 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+The panel is now the readout for the display work, which is what comes next: each of the three PLLs has a lane that beats from its own clock, a lock flag, and a UART message whose `s=` field reports the envelope ramp, so a clock that stops, drifts or loses lock is visible on the board without an instrument -- and the HDMI problem is a clock-routing problem. Before the display is attacked again, the desktop core's `ODIV0_SEL` still wants taking from 100 to 50, since entry 31 measured that it halves its pll_27 and puts hclk5 at 185.625 MHz instead of 371.25, half the TMDS bit clock. Carry the one-hot finding into that work as well: any reset-less `case` FSM in the desktop core is silently dead in its bitstream, a display pipeline is exactly where one would hide, and the cheap check is to re-synthesise with the log kept and look for `Recoding FSM`. Sections 18 and 19 of `evidence/desktop-clock-routing.txt` remain the handoff for the display itself. Do not re-walk the carrier ladder or the duty ladder, both refuted here and both recorded in `evidence/led-pmod-validation.txt`; do not claim a carrier rate limit, because none was measured. Keep the lane meanings, keep the `s=` readout, keep the power-cycle rule on every load, and keep `/home/vash/tools` as the durable home for builds.
+
+#### Files Modified:
+
+- fpga/clock-smoke/clock_smoke.v
+- tools/test-heartbeat-waveform.sh
+- evidence/led-pmod-validation.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

@@ -554,14 +554,33 @@ module clock_smoke (
     wire led_sys, led_27, led_hclk, led_nes;
     wire [7:0] env_sys;
 
-    // All four lanes on the same slow carrier, about 200 Hz, which is above
-    // flicker fusion and slow enough for any reasonable LED drive.  The ladder
-    // that spanned 195 kHz to 100 Hz changed nothing, so the carrier rate is
-    // not what is hiding the envelope.
-    heartbeat #(.TICK_DIV(50_000), .TICKS(1000), .CARRIER_DIV(977))  hb_sys  (.clk(sys_clk), .led(led_sys), .env_out(env_sys));
-    heartbeat #(.TICK_DIV(27_000), .TICKS(1000), .CARRIER_DIV(527))  hb_27   (.clk(clk27),   .led(led_27));
-    heartbeat #(.TICK_DIV(74_250), .TICKS(1000), .CARRIER_DIV(1450)) hb_hclk (.clk(hclk),    .led(led_hclk));
-    heartbeat #(.TICK_DIV(21_505), .TICKS(1000), .CARRIER_DIV(420))  hb_nes  (.clk(clk_nes), .led(led_nes));
+    // The same sound on all four clocks, and DUTY_SHIFT is left at its default
+    // of 8, which is a plain env/256 -- the shape accepted on the board.  A
+    // carrier ladder and a duty ladder both ran and neither moved the look: what
+    // this envelope needed was time, and the LEDs compress the top of the duty
+    // range (6, 25, 50 and 100 per cent duty read as 70, 80, 90 and 100 per cent
+    // brightness) without that mattering, since a fade from off to on reads as a
+    // full excursion at any peak.  A sixteen-bit carrier is kept because it puts
+    // the carrier at a few hundred hertz with no prescaler at all, and because
+    // its extra levels are what let a lower duty range stay smooth if one is ever
+    // wanted.
+    heartbeat #(.TICK_DIV(50_000), .TICKS(1000)) hb_sys  (.clk(sys_clk), .led(led_sys), .env_out(env_sys));
+    heartbeat #(.TICK_DIV(27_000), .TICKS(1000)) hb_27   (.clk(clk27),   .led(led_27));
+    heartbeat #(.TICK_DIV(74_250), .TICKS(1000)) hb_hclk (.clk(hclk),    .led(led_hclk));
+    heartbeat #(.TICK_DIV(21_505), .TICKS(1000)) hb_nes  (.clk(clk_nes), .led(led_nes));
+
+    wire blip_27, blip_hdmi, blip_nes, led_breath;
+
+    // The lock lanes echo the beat: the same sound, single (S2_EN 0) and crisp
+    // (FALL 4, so it is over in about 107 ms), each beginning later than the
+    // last so the three of them ring down through the dark half of the second.
+    // Each is still clocked by its own clock, and each is gated by its own lock
+    // at the pin, so a PLL that loses lock goes dark rather than lying.
+    heartbeat #(.TICK_DIV(27_000), .TICKS(1000), .DELAY_MS(550), .S2_EN(0), .FALL(8'd4)) echo_27   (.clk(clk27),   .led(blip_27));
+    heartbeat #(.TICK_DIV(74_250), .TICKS(1000), .DELAY_MS(700), .S2_EN(0), .FALL(8'd4)) echo_hdmi (.clk(hclk),    .led(blip_hdmi));
+    heartbeat #(.TICK_DIV(21_505), .TICKS(1000), .DELAY_MS(850), .S2_EN(0), .FALL(8'd4)) echo_nes  (.clk(clk_nes), .led(blip_nes));
+
+    breath  #(.TICK_DIV(50_000)) brd (.clk(sys_clk), .led(led_breath));
 
     // Ramp evidence for the `s=` field of the message.  The envelope is supposed
     // to climb six per millisecond from zero to 255, so it must pass through
@@ -576,20 +595,24 @@ module clock_smoke (
 
     // Module lane n is module pin (1, 2, 3, 4, 7, 8, 9, 10)[n], and the dock
     // interleaves those onto IO0/2/4/6 for lanes 0-3 and IO1/3/5/7 for lanes
-    // 4-7.  In module order the panel reads: sys_clk, clk27, hclk, spare,
-    // pll_27 lock, pll_hdmi lock, spare, spare.
-    assign pmod1_io0 = led_sys;      // LED 1 <- sys_clk  50.00 MHz  1 Hz
-    assign pmod1_io2 = led_27;       // LED 2 <- clk27    27.00 MHz  1 Hz
-    assign pmod1_io4 = led_hclk;     // LED 3 <- hclk     74.25 MHz  1 Hz
-    assign pmod1_io6 = led_nes;      // LED 4 <- clk_nes  21.50 MHz  1 Hz
-    assign pmod1_io1 = lock27;       // LED 5 <- pll_27    LOCK, steady
-    assign pmod1_io3 = lock_hdmi;    // LED 6 <- pll_hdmi  LOCK, steady
-    assign pmod1_io5 = lock_nes;     // LED 7 <- pll_nes   LOCK, steady
-
-    // The spare lane goes back to being a spare, held HIGH rather than left
-    // floating, so that nothing on the panel is dark by accident and any dark
-    // lane is a fault rather than a design choice.
-    assign pmod1_io7 = 1'b1;         // LED 8   spare
+    // 4-7.  In module order the panel reads: sys_clk, clk27, hclk, clk_nes,
+    // pll_27 lock, pll_hdmi lock, pll_nes lock, spare.
+    //
+    // One panel, one rhythm.  The first four lanes are the four clocks beating.
+    // The three lock lanes answer each beat with a short ripple through the
+    // quiet half of the second -- the same sound, single and crisp and delayed,
+    // so the panel is not four lanes of information with four leftovers beside
+    // them.  The ripple holds its shape because every clock here is an exact
+    // ratio of the one crystal.  The spare lane breathes, slowly, so there is
+    // one calm thing on the panel while the other seven count.
+    assign pmod1_io0 = led_sys;            // LED 1 <- sys_clk  50.00 MHz  the beat
+    assign pmod1_io2 = led_27;             // LED 2 <- clk27    27.00 MHz  the beat
+    assign pmod1_io4 = led_hclk;           // LED 3 <- hclk     74.25 MHz  the beat
+    assign pmod1_io6 = led_nes;            // LED 4 <- clk_nes  21.50 MHz  the beat
+    assign pmod1_io1 = lock27   && blip_27;    // LED 5 <- pll_27 lock   echo at 550 ms
+    assign pmod1_io3 = lock_hdmi && blip_hdmi; // LED 6 <- pll_hdmi lock  echo at 700 ms
+    assign pmod1_io5 = lock_nes  && blip_nes;  // LED 7 <- pll_nes lock   echo at 850 ms
+    assign pmod1_io7 = led_breath;         // LED 8   slow breath, ~4 s
 endmodule
 
 
@@ -646,7 +669,11 @@ endmodule
 module heartbeat #(
     parameter integer TICK_DIV = 50_000,   // this clock's cycles per millisecond
     parameter integer TICKS    = 1000,     // milliseconds in one beat
-    parameter integer CARRIER_DIV = 1      // clocks per carrier step; see above
+    parameter integer CARRIER_DIV = 1,     // clocks per carrier step
+    parameter integer DELAY_MS = 0,        // shift the whole beat by this much
+    parameter integer S2_EN    = 1,        // 0 for a single short sound
+    parameter [7:0]   FALL     = 8'd1,     // brightness given up per millisecond
+    parameter integer DUTY_SHIFT = 8       // duty range used, of 16 bits
 ) (
     input  wire clk,
     output wire led,
@@ -660,7 +687,7 @@ module heartbeat #(
     // both sounds and looks like -- and the slow part is what makes the
     // brightness legible rather than merely correct.
     localparam [7:0] S1_PEAK = 8'd255, S2_PEAK = 8'd120;
-    localparam [7:0] S1_RISE = 8'd6,   S2_RISE = 8'd5, FALL = 8'd1;
+    localparam [7:0] S1_RISE = 8'd6,   S2_RISE = 8'd5;
 
     localparam [2:0] ST_WAIT1 = 3'd0, ST_UP1 = 3'd1, ST_DN1 = 3'd2,
                      ST_WAIT2 = 3'd3, ST_UP2 = 3'd4, ST_DN2 = 3'd5;
@@ -668,7 +695,7 @@ module heartbeat #(
     reg [9:0]  phase;      // 0..TICKS-1, milliseconds into the beat
     reg [17:0] tick;       // this clock's cycles within the current millisecond
     reg [7:0]  env;        // the envelope, and so the brightness
-    reg [7:0]  pwm;        // the carrier counter, 0..255
+    reg [15:0] pwm;        // the carrier counter, 0..65535
     reg [15:0] cdiv;       // carrier prescaler: clocks between carrier steps
 
     // This design has no reset: every flop here powers up at zero and the
@@ -697,11 +724,21 @@ module heartbeat #(
 
     wire tick_now = (tick == TICK_DIV - 1);
 
+    // DUTY_SHIFT is how much of a sixteen-bit carrier's range the envelope is
+    // allowed to use, so the peak duty is 255 * 2**DUTY_SHIFT / 65536.  The
+    // default of 8 reproduces a plain env/256 across a 256-step carrier; smaller
+    // values put the whole envelope into a dimmer band.  That matters because
+    // this deck's LEDs are compressed at the top: measured by eye, 6, 25, 50 and
+    // 100 per cent duty read as 70, 80, 90 and 100 per cent brightness, so a
+    // fade spent across the top of the range has almost nowhere to go.  A wider
+    // counter also puts the carrier at a few hundred hertz with no prescaler at
+    // all, since it is the lane's clock over 65536.
+    wire [15:0] thresh = env << DUTY_SHIFT;
     wire pwm_step = (cdiv == CARRIER_DIV - 1);
 
     always @(posedge clk) begin
         cdiv <= pwm_step ? 16'd0 : cdiv + 16'd1;
-        if (pwm_step) pwm <= pwm + 8'd1;
+        if (pwm_step) pwm <= pwm + 16'd1;
         if (tick_now) begin
             tick  <= 18'd0;
             phase <= (phase == TICKS - 1) ? 10'd0 : phase + 10'd1;
@@ -713,10 +750,17 @@ module heartbeat #(
     always @(posedge clk) begin
         if (tick_now) begin
             case (st)
-                ST_WAIT1: if (phase == 10'd0)    st <= ST_UP1;
+                ST_WAIT1: if (phase == DELAY_MS) st <= ST_UP1;
                 ST_UP1:   if (env >= S1_PEAK)    st <= ST_DN1;
                 ST_DN1:   if (env == 8'd0)       st <= ST_WAIT2;
-                ST_WAIT2: if (phase >= S2_ONSET) st <= ST_UP2;
+                // With S2 switched off the beat is over, so WAIT2 lasts one tick
+                // and returns to the start.  It must NOT wait for the S2 onset:
+                // S2_ONSET + DELAY_MS can run past the end of the second, and a
+                // lane delayed that far never leaves WAIT2 -- which is exactly
+                // what two of the three lock lanes did, blinking once at
+                // power-up and then sitting dead.
+                ST_WAIT2: if (!S2_EN)                        st <= ST_WAIT1;
+                          else if (phase >= S2_ONSET + DELAY_MS) st <= ST_UP2;
                 ST_UP2:   if (env >= S2_PEAK)    st <= ST_DN2;
                 ST_DN2:   if (env == 8'd0)       st <= ST_WAIT1;
                 default:                         st <= ST_WAIT1;
@@ -732,8 +776,79 @@ module heartbeat #(
         end
     end
 
-    assign led     = (pwm < env);
+    assign led     = (pwm < thresh);
     assign env_out = env;
 endmodule
 
 `default_nettype wire
+
+
+// ------------------------------------------------------------------ breath
+//
+// A slow swell for the spare lane: brightness rising and falling over about four
+// seconds, so the panel has one calm thing on it while the other seven count.
+//
+// The envelope is the top eight bits of a millisecond counter that runs 0 to
+// 4095, which makes a triangle whose brightness steps once every eight
+// milliseconds -- slow enough to watch, and smooth rather than stepped because
+// the carrier underneath it is still two hundred hertz.  No reset and no state
+// machine: this is a counter, a slice, and a comparison, which is the part of
+// this flow that has never been in doubt.
+module breath #(
+    parameter integer TICK_DIV = 50_000,   // this clock's cycles per millisecond
+    parameter integer CARRIER_DIV = 1,     // clocks per carrier step
+    parameter integer DUTY_SHIFT = 8       // duty range used, of 16 bits
+) (
+    input  wire clk,
+    output wire led
+);
+    reg [11:0] phase;      // milliseconds, 0..4095 = 4.096 s
+    reg [17:0] tick;
+    reg [15:0] pwm;
+    reg [15:0] cdiv;
+
+    wire tick_now = (tick == TICK_DIV - 1);
+    wire pwm_step = (cdiv == CARRIER_DIV - 1);
+    wire [7:0] env = phase[11] ? ~phase[10:3] : phase[10:3];
+    wire [15:0] thresh = env << DUTY_SHIFT;
+
+    always @(posedge clk) begin
+        cdiv <= pwm_step ? 16'd0 : cdiv + 16'd1;
+        if (pwm_step) pwm <= pwm + 16'd1;
+        if (tick_now) begin
+            tick  <= 18'd0;
+            phase <= (phase == 12'd4095) ? 12'd0 : phase + 12'd1;
+        end else begin
+            tick <= tick + 18'd1;
+        end
+    end
+
+    assign led = (pwm < thresh);
+endmodule
+
+
+// ------------------------------------------------------------- steady_duty
+//
+// A steady duty, for qualifying the LEDs.  A carrier at about two hundred hertz
+// with a fixed duty, so four lanes at four duties can be ranked by eye and the
+// panel's brightness curve read off directly instead of argued about.  Same
+// carrier as every other lane, so the comparison is fair.
+module steady_duty #(
+    parameter integer CARRIER_DIV = 1,     // clocks per carrier step
+    parameter integer DUTY_SHIFT = 8       // duty range used, of 16 bits
+) (
+    input  wire clk,
+    output wire led
+);
+    reg [15:0] pwm;
+    reg [15:0] cdiv;
+
+    wire pwm_step = (cdiv == CARRIER_DIV - 1);
+
+    always @(posedge clk) begin
+        cdiv <= pwm_step ? 16'd0 : cdiv + 16'd1;
+        if (pwm_step) pwm <= pwm + 16'd1;
+    end
+
+    assign led = (pwm < (16'd255 << DUTY_SHIFT));
+endmodule

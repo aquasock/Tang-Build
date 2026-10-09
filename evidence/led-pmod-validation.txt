@@ -1,0 +1,87 @@
+# The PMOD LED socket, validated
+
+Purpose: to know what these eight lights can and cannot express, so that the LED
+panel can be used as a **readout of the clock tree** while the display is worked
+on.  This is the instrument that gets carried into the HDMI work.
+
+Validated build: `/home/vash/tools/clock-smoke/clock-smoke.fs`, sha256
+`47ea82c309d87697d9656f72e06b03ca88be7747f3d5aaff8ff1c94e2218018b`.
+All eight lanes pass on the board.
+
+## The panel
+
+```
+LED 1  sys_clk   50.000 MHz  a heartbeat, clocked by sys_clk
+LED 2  clk27     27.000 MHz  a heartbeat, clocked by clk27
+LED 3  hclk      74.250 MHz  a heartbeat, clocked by hclk
+LED 4  clk_nes   21.505 MHz  a heartbeat, clocked by clk_nes
+LED 5  pll_27    lock        a 107 ms echo of the beat, 550 ms in
+LED 6  pll_hdmi  lock        the same echo, 700 ms in
+LED 7  pll_nes   lock        the same echo, 850 ms in
+LED 8  sys_clk   spare       a slow triangle, ~4 s up and down
+```
+
+Each heartbeat lane is clocked by the clock it reports on, so a lane is a
+witness to that clock and nothing else.  Each echo lane is gated by its own
+lock at the pin, so an unlocked PLL is dark rather than lying.  A lane that
+goes dark or stops moving is therefore a statement about a clock, not about the
+panel.
+
+## What the lights can do
+
+**Brightness is real but compressed at the top.**  Measured by eye on four
+steady lanes at 6, 25, 50 and 100 per cent duty, a human rates them 70, 80, 90
+and 100 per cent bright.  The whole top of the duty range collapses into the top
+third of the perceived range.
+
+**And it does not matter, because a fade from off to on reads as a full
+excursion at any peak.**  The spare lane's four-second triangle at a 6.2 per
+cent peak duty is reported as fading "in and out from 0-100% properly".  A duty
+ladder (peaks of 1.6, 3.1, 6.2 and 12.4 per cent) was built to chase the
+compression and was a dead end: the variable that matters is not the duty range.
+
+**Time is the binding constraint**, and this was the whole difficulty.  A
+brightness change has to outlast the eye's integration window to be seen as a
+change at all.  The first envelope decayed over 64 ms inside a single 107 ms
+sound, and four perfectly correct lanes read as nothing but on and off.  Stretch
+the decay to 255 ms and the fade is visible; that is the delivered shape.
+
+**Carrier rate is not a demonstrated constraint.**  Something between about
+200 Hz and about 1.1 kHz is known to work -- the steady 6 per cent probe at
+200 Hz reads dim, the breath at about 763 Hz reads correctly, and the echo
+pings at about 412 Hz read correctly.  The upper limit is NOT established: the
+original build ran a 195 kHz carrier and looked flat, but that was the decay,
+and a carrier ladder from 195 kHz down to 100 Hz changed nothing, so no test
+has ever isolated the carrier.  Do not claim a limit that was not measured.
+
+**One probe was misread and is recorded so it is not repeated.**  A 1 Hz carrier
+at 6 per cent duty was taken as proof that the LED displays duty.  It is on for
+62 ms once a second: a statement about *timing*, not about brightness.  The
+probe that answers the brightness question is a *steady* dim light beside steady
+bright ones.
+
+## Two defects this panel found
+
+**A reset-less FSM is re-encoded one-hot and comes up dead.**  Detailed in
+`evidence/clock-smoke-heartbeat-visible.txt`; it is why the first heartbeat test
+was four dark lanes.  One attribute, `(* fsm_encoding = "none" *)`, fixes it.
+
+**A delayed lane blinked once and died.**  The state machine's second-sound gate
+is `phase >= S2_ONSET + DELAY_MS`, and with the second sound switched off a lane
+whose delay pushes that sum past the end of the second -- past 597 ms -- never
+leaves `WAIT2`.  Lanes delayed 700 and 850 ms sat dead while the 550 ms lane
+worked.  Found on the board; the fix returns straight to the start when S2 is
+off.  The regression now runs **two beats** and checks the second onset, and it
+was verified to fail against the old code rather than assumed to catch it -- the
+first version of that check used a 550 ms delay, which is inside the second and
+therefore passed on the broken design.
+
+## What this buys the HDMI work
+
+The three PLLs now each have a lane that beats from their own clock, a lock
+flag, and a UART readout that reports the envelope's ramp directly in the `s=`
+field of the message.  A clock that stops, drifts, or loses lock is visible on
+the board without an instrument, and the message distinguishes a real ramp from
+a stepped one.  Keep the lane meanings and keep power-cycling before every load:
+an SRAM image loaded onto a running design does not take effect and produces
+plausible, meaningless readings.
