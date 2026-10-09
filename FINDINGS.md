@@ -173,14 +173,21 @@ settle it outright.
 ## 6. What is still unproven
 
 - **The display.**  The desktop core runs on the board and answers on UART1 at
-  2 Mbaud, but its HDMI output produces no signal, and the cause is not yet
-  located.  What has been ruled out by measurement: the bitstream's `FCLK` and
-  `PCLK` at the three TMDS serialisers match the vendor's exactly, the PLL
-  frequencies are right, the pad and serialiser configuration matches, and the
-  bitstream is byte-reproducible.  An earlier reading of this file that the
-  `FCLK` was absent was wrong — see section 11 of
+  2 Mbaud, but its HDMI output has not yet produced a signal.  The cause is now
+  located and fixed in the flow rather than guessed: an IOLOGIC's fast clock
+  can only be selected from lanes 0 and 2 on this die, the three TMDS
+  serialisers were served by lanes 1 and 3, and the packer dropped the
+  unencodable lane silently, leaving the clock mux unselected.  The flow now
+  constrains the lane and the bitstream carries the selection where the
+  previous one carried none.  What has been ruled out by measurement: the
+  bitstream's `FCLK` and `PCLK` at the three TMDS serialisers match the
+  vendor's, the PLL frequencies are right, the pad and serialiser
+  configuration matches, and the bitstream is byte-reproducible.  An earlier
+  reading of section 8 that the `FCLK` was absent was wrong — see section 11 of
   [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt),
-  which supersedes the sections before it.
+  and section 19 for this cycle.  What has NOT been settled is whether the
+  remaining attribute difference at the serialisers is a difference in fuses at
+  all; see section 7 item 1.
 - **The core's OLED and audio paths**, which are built but unexercised.
 - **Timing at pixel rates**, which the open flow reports but which has not been
   checked against the vendor's own numbers for this design.
@@ -188,17 +195,21 @@ settle it outright.
 
 ## 7. Next steps
 
-1. Fix the missing clock route.  The route from a PLL output through the
-   inter-HCLK network to an IOLOGIC's `FCLK` is not achievable in this nextpnr
-   build for this device even though the graph contains the arcs, and that one
-   defect is what keeps the display dark.  Scope it from nextpnr's own routing
-   state before writing anything against it — whether the PLL output reaches
-   the serialisers' lane at all, or whether the failure is in the last hop that
-   `create_hclk_switch_matrix` does create.
-2. `scripts/pnr-desktop.sh` calls bare `nextpnr-himbaechel`, so it takes
-   whatever is first on PATH.  The binary that carries the regenerated database
-   is the fork's build, and it currently lives in a scratch directory.  Pin the
-   script to it and fail clearly when it cannot be found.
+1. Confirm the display on the board.  The lane constraint is in the flow and
+   the bitstream now carries `FCLKSEL1`/`FCLKSEL2` at all three serialisers
+   where it previously carried no lane selection at all, but nothing has yet
+   been loaded since.  One offline question is still open beside it, and it is
+   deliberately NOT treated as a cause: the vendor's serialisers decode with
+   four `FCLKSEL` values plus `HWL` and ours with two, but the decoder aliases
+   `FCLKSEL` values onto the same fuses, so an attribute-list difference is not
+   evidence of a fuse difference.  If the display is still dark, compare the
+   fuses at the three TMDS tiles before changing what the packer emits.
+2. `scripts/build-clock-smoke.sh` still defaults its build to `/tmp/tb/...`,
+   which has already cost one bitstream to a reboot.  `scripts/pnr-desktop.sh`
+   was fixed in the same way and this one was not; point it somewhere durable.
+   The nextpnr binary and the device database must also be regenerated
+   together: `gowin_pack` loads the chipdb at pack time, so a routed netlist
+   and a database from different apicula revisions do not pack.
 3. The core itself needs no change for any of the above, and should not be
    rebuilt until the route works.
 

@@ -65,10 +65,15 @@ PYTHONPATH=. python3 -m apycula.chipdb_builder GW5AST-138C \
 `msgspec` has to be importable for this, and the bundle does not ship it — see
 the traps at the end of the next section.
 
-Expect `sha256 3cfbe062684bbb807f7b17a0434211dbd0f7be895f16afc7055fd974fec2a9df`,
-850,468 bytes, in about twelve seconds. That is byte-for-byte the database the
-builds here were made from, so a disagreement means a different Gowin install,
-not a race.
+Expect `sha256 57a1c2a54e9d8b18dbec8442420eb280de79e7d95de598e6ceb9f74ebff9182f`,
+850,124 bytes, in about twelve seconds, from the fork's tip as it stands after
+the IOLOGIC lane constraint landed (`patches/0003`). That is byte-for-byte the
+database the builds here were made from, so a disagreement means a different
+`apycula` revision or a different Gowin install, not a race. Before that change
+the same install produced
+`3cfbe062684bbb807f7b17a0434211dbd0f7be895f16afc7055fd974fec2a9df` at 850,468
+bytes; both the size and the hash move, because an IOLOGIC is now offered two
+`HCLK` lanes instead of four.
 
 The suite's own database must not be used in its place. Both are for
 `GW5AST-138C` and both carry the `PLL` tables; what the suite's lacks is every
@@ -149,15 +154,36 @@ PYTHONPATH=$PWD/../apicula python3 himbaechel/uarch/gowin/gowin_arch_gen.py \
 
 | artefact | bytes | sha256 |
 |---|---|---|
-| `chipdb-GW5AST-138C.bba` | 93,519,317 | `3aea299a264462a47a022975e06ff2635f53c7ba5fd4f6763605944104321fcf` |
-| `chipdb-GW5AST-138C.bin` | 34,230,238 | `27d66481762e9facbe9c3a39c84c8d9e335769823f84816574a3607ae5335020` |
+| `chipdb-GW5AST-138C.bba` | 93,487,534 | `4293aa937a80710f7ae7e5e7febe3691594712357fbee09408311f960cfe9c09` |
+| `chipdb-GW5AST-138C.bin` | 34,221,966 | `959b6ba54a2e935294c93f4f540eb3fa0ccc45c5dc935dfb1eb6f5b3b0f78c12` |
 
-The `.bin` is that `.bba` compiled by the build's own `bbasm`.
+The `.bin` is that `.bba` compiled by the build's own `bbasm`, and
+`bbasm -l in.bba out.bin` reproduces it: checked here by recompiling the
+pre-constraint `.bba` and getting the recorded `27d66481762e...` back.
+
+**The database, the architecture and the packer must all come from one
+revision.**  The `.bba`/`.bin` above are from the fork's tip after the IOLOGIC
+lane constraint; the same build before that change gave
+`3aea299a264462a47a022975e06ff2635f53c7ba5fd4f6763605944104321fcf` at 93,519,317
+bytes and `27d66481762e9facbe9c3a39c84c8d9e335769823f84816574a3607ae5335020` at
+34,230,238.  `nextpnr-himbaechel` itself is architecture-agnostic -- it loads
+the `.bin` from `share/himbaechel/gowin/` next to the binary at run time, so the
+binary's size does not change when the device data does and its version string
+says nothing about which database it embedded.  `gowin_pack` in turn loads
+`apycula/<device>.msgpack.xz` itself at pack time.  Mixing revisions fails
+quietly rather than loudly: packing a routed netlist from an older architecture
+against a newer database dies inside `get_simple_pip_fuses` with a bare
+`KeyError` naming a wire, which reads as a packer bug and is not.
 
 Two traps in the suite's Python that cost time here and are not obvious from
 the error: `nextpnr`'s embedded interpreter wants `PYTHONHOME` pointed at the
 bundle, and `save_chipdb` — and so `chipdb_builder` above — needs `msgspec`,
-which the bundle does not ship.
+which the bundle does not ship.  Keep it outside the toolchain install:
+`pip install --target=/home/vash/tools/pydeps msgspec`, then put that directory
+on `PYTHONPATH` beside the fork's `apycula`.  It once lived in `/tmp/tb/pydeps`
+and a reboot deleted it, which broke `chipdb_builder` and `gowin_pack` until it
+was restored — the same hazard as a nextpnr build directory under `/tmp`, and
+`scripts/build-clock-smoke.sh` still defaults there.
 
 The first of those is worse than it looks, because the bundle's own
 `environment` script **unsets** `PYTHONHOME`:

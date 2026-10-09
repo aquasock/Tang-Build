@@ -704,6 +704,15 @@ pair.
 18. HANDOFF: state, the change left, and how to verify it
 ==================================================================
 
+SUPERSEDED IN PART BY SECTION 19.  The cause and the state recorded here stand.
+Three things in this section are corrected there, and a reader should take the
+corrections first: the change belongs in the FCLK-arc loop of `gw5_make_hclk_pips`
+and NOT in `gw5_hclk_arcs` / `gw5_create_hclk_iol_pip`; the vendor's serialisers
+use lane 0 and not lane 2; and the ten-attribute acceptance test is not
+measurable as written, because the decoder aliases `FCLKSEL` values onto the
+same fuses.
+
+
 STATUS.  The desktop core is not implicated and has needed no change at any
 point.  Its bitstream is byte-reproducible (section 11), its pads, serialiser
 attributes, `FCLK`/`PCLK` connections and PLL frequencies all match a working
@@ -780,3 +789,110 @@ general-fabric `FCLK` (13), the lane entry as *fabric-related* rather than
 lane-related (14, 21), `bel.fclk` being `None` (22), and the IOLOGIC table rows
 being absent (24) are all refuted above, with the measurement that refuted each
 recorded beside it.
+
+
+19. The lane constraint is in the flow, and the selection is in the bitstream
+==================================================================
+
+WHAT WAS DONE.  Section 18's change was made, but not where section 18 said.
+The arcs that offer an IOLOGIC its fast clock are the `FCLKA`/`FCLKB` pips at
+the IOLOGIC cell itself, and they are created in one place: the
+`for i in range(2): for j in range(4)` loop of `chipdb.gw5_make_hclk_pips`.
+Measured out of the generated database before the change, every IOLOGIC was
+offered all four lanes -- `(102,181)` and `(100,181)` from `HCLK30..HCLK33`,
+`(57,181)` from `HCLK10..HCLK13`.  `gw5_hclk_arcs` and
+`gw5_create_hclk_iol_pip`, the two functions section 18 named, do something
+else: the first returns the serving *block* index (measured: block 3 for the
+first two cells, block 1 for the third) and the second is a yes/no gate on
+whether an IOLOGIC is HCLK-clockable at all.  Neither touches the lane, and
+editing either would have changed nothing about the display.  The loop now
+iterates a measured, device-scoped lane set -- `(0, 2)` on this die -- and a
+device nobody has measured keeps all four, which is why the GW5A-25A database
+is byte-identical before and after, verified by building it both ways rather
+than by reading the code.
+
+WHY LANES 0 AND 2, AND WHY NOT "THE EVEN ONES".  Read out of the device's own
+`IOLOGIC` table: a lane is selectable exactly when the table can spell it both
+plain and underscored, `FCLKSEL1 = HCLK<n>` and `FCLKSEL2 = HCLK<n>_`.
+`FCLKSEL1` carries `HCLK0`, `HCLK1` and `HCLK2`; `FCLKSEL2` carries `HCLK0_`,
+`HCLK2_` and `HCLK3`.  Lanes 0 and 2 are the only lanes both halves of the pair
+cover; lane 1 has no `HCLK1_` row and lane 3 has no `HCLK3` row.  That is the
+whole constraint, and it is a table lookup rather than arithmetic.
+
+THE LANE IS CHOSEN BY THE ROUTER, NOT AT PLACEMENT.  `nextpnr`'s `postRoute()`
+reads the name of the wire driving each IOLOGIC's `FCLK` port and, on this
+5A-family device, indexes `hclk_up_wire[block][out]` to report
+`IOLOGIC_FCLK = HCLK_OUT<out>`.  The value is a *consequence* of the route,
+which is why constraining the routable arcs is the correct and only lever on
+the apicula side.  Nothing in `nextpnr`'s `HCLK_OUT<n>` handling or in the
+packer's `_fclk_lane` was changed, and neither needs it.
+
+THE CONTROL, AND WHY IT IS TRUSTWORTHY.  The pre-change binary and its
+architecture (`chipdb-GW5AST-138C.bba` `3aea299a2644...`, its `.bin` rebuilt
+with `bbasm -l` to the recorded `27d66481762e...`) were kept, and the same
+routed netlist was placed and routed twice.  The control reproduced the
+baseline exactly: 947 `Failed to route` lines -- `clk` 943, `hclk5` 3, `clk27`
+1 -- and its routed JSON differs from the archived `open-pnr-backup/pnr.json`
+in exactly one key, `settings['cst.filename']`, which is a path.  A difference
+between the two runs is therefore attributable to the architecture and not to
+the run.
+
+WHAT CHANGED.  The lane-fixed architecture produces the same 947 / 943 / 3 / 1
+signature: the dedicated route to `FCLKA` still fails and still falls back to
+fabric, so "0 `hclk5` failures", which section 18 implied and a later reading
+made explicit, was never the right criterion.  What changed is where the
+fallback lands.  The three `OSER10`s went from `HCLK_OUT1`, `HCLK_OUT1`,
+`HCLK_OUT1` to `HCLK_OUT2`, `HCLK_OUT0`, `HCLK_OUT0`, and the HCLK block at
+`(81,181)` went from driving lanes 1 and 3 to driving lanes 0 and 3 -- lane 0
+for the serialisers, which is the lane the vendor's own build drives, and lane
+3 for the `CLKDIV` that divides `hclk5` down to `hclk`.  The packs:
+
+  before  `ec6baf2a894a8b6c3f991874d969b27ff5bab391a26d8440d85efe39dc80b6f1`,
+          refused by the guard in `patches/0002`, exactly as entry 24 recorded
+  after   `.fs` `8ce8671df6723f5c5015428a50d94d31845c656fe24fecc7b68ff7abd5853484`,
+          35,752,331 bytes, converting to `.bin`
+          `bb5d01cc90c22f5d03e9fefc948d1f0a074e491d55acdf3994c9574b95ff8c37`,
+          4,466,048 bytes, through the repository's own `tools/fs-to-bin.py`
+
+Decoded with the unpacker's own `parse_attrvals`, the three serialisers went
+from three attributes carrying no lane selection at all -- `CLKOMUX 61`,
+`OUTMODE 16`, `WRFCLKSEL 102` -- to seven: those three plus `FCLKSEL1 81`,
+`FCLKSEL2 114`, `LSRIMUX_0 1` and `LSROMUX_0 1`.  The clock mux is selected,
+which is the thing section 8 found absent and section 18 asked for.
+
+`LSRIMUX_0`, AND A RETRACTION.  Entry 11 removed `LSRIMUX_0` from output cells
+on the strength of a Gowin build in which it was clear -- but that build is
+`TinyTang/build/desktop/source/impl/pnr/desktop.fs`, which section 13's
+successor had already flagged as not the file that drives the working display.
+Re-measured for this change: the working bitstream, `e83e2d4afbd7...`, carries
+`LSRIMUX_0 1` on its serialisers and on 314 ordinary IOLOGICs.  The removal is
+reverted, and the build it produced had left the three TMDS `OSER10`s as the
+only IOLOGICs on the die without it.  This is the second claim in this file to
+be generalised from one measured cell; the first is the "no
+`FCLKSEL0`/`FCLKSEL3` row" comment in the packer, retracted in the same pass.
+
+WHAT IS NOT ESTABLISHED.  The vendor's serialisers decode with four `FCLKSEL`
+values -- `FCLKSEL0 79`, `FCLKSEL1 81`, `FCLKSEL2 114`, `FCLKSEL3 86` -- plus
+`HWL 107`, and ours decode with two.  That is NOT yet a finding, and section
+17 gives the reason: the decoder aliases `FCLKSEL` values onto the same fuses,
+so forcing `HCLK_OUT0` and `HCLK_OUT2` packs byte-identically and both decode as
+`FCLKSEL1 81`.  A difference in the attribute list is therefore not evidence of
+a difference in the fuses.  The table does carry the rows (`FCLKSEL0` id 79 on
+`HCLK0`, `HCLK1`, `HCLK3`; `FCLKSEL3` id 129 on `HCLK0`, `HCLK0_`), and the
+`GW5A` handler this device inherits does emit all four per lane.  Settle it by
+comparing the fuses at the three TMDS tiles, or on the board.  Nothing in this
+cycle was loaded, so the display is still a hypothesis and not a result.
+
+HANDOFF.  Load the `.bin` at `bb5d01cc...` and look at the display.  If it is
+dark, the first thing to compare is the fuse set at the three TMDS IOLOGIC
+tiles against `e83e2d4afbd7...`, not the attribute lists.  If it is lit, the
+only work left is the attribute question above.  Rebuild the pair together:
+`gowin_pack` loads the chipdb at pack time, so a routed netlist and a database
+from different apicula revisions do not pack -- they fail with a bare
+`KeyError` from `get_simple_pip_fuses`, which reads as a packer bug and is not.
+
+DO NOT RE-WALK, in addition to section 18's list.  The change site is not
+`gw5_hclk_arcs` or `gw5_create_hclk_iol_pip`; the vendor's lane is 0 and not 2;
+"0 `hclk5` dedicated-routing failures" is not the acceptance criterion and never
+was; and an attribute-list difference at the serialisers is not yet evidence of
+anything.

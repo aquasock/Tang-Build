@@ -785,3 +785,38 @@ None.
 - User Test: N/A
 
 ---
+
+## 27 COMMIT Unreleased 2026-10-09T08:45:02-07:00
+
+#### Coming From:
+
+Unreleased a47855e
+
+#### Purpose:
+
+Make the one change section 18 of the evidence file specified -- constrain an IOLOGIC's fast clock to a lane this device can encode -- and record what it does to the routed and packed design.
+
+#### Outcome:
+
+The lane constraint is made, and it is not where the handoff said. Reading the generated database rather than the code settled the site: every IOLOGIC was offered all four HCLK lanes of its serving block by the `for i in range(2): for j in range(4)` loop in apicula's `gw5_make_hclk_pips`, measured as `HCLK30..HCLK33` at `(102,181)` and `(100,181)` and `HCLK10..HCLK13` at `(57,181)`, while the two functions section 18 named -- `gw5_hclk_arcs` and `gw5_create_hclk_iol_pip` -- return the serving *block* index and a yes/no gate respectively, so editing either would have changed nothing about the display; that misdirection is itself the finding, because the log had spent eight cycles on numbers read out of the wrong structure and this would have been the ninth. The loop now iterates a measured, device-scoped lane set, `(0, 2)` on the GW5AST-138C and all four wherever nobody has measured, and the invariant behind it is a table lookup: a lane is selectable exactly when the device's `IOLOGIC` table can spell it both plain and underscored, `FCLKSEL1 = HCLK<n>` and `FCLKSEL2 = HCLK<n>_`, which covers lanes 0 and 2 and neither odd lane, since `FCLKSEL1` has no `HCLK3` row and `FCLKSEL2` has no `HCLK1_` row. The lane turns out to be chosen by the router and not at placement, which is why the routable arcs are the lever: nextpnr's `postRoute()` reads the name of the wire driving each `FCLK` port and indexes `hclk_up_wire[block][out]` to report `IOLOGIC_FCLK = HCLK_OUT<out>`, so nothing in nextpnr's `HCLK_OUT<n>` handling and nothing in the packer's `_fclk_lane` was changed, and neither needs it. The change was verified against a control rather than a baseline: the pre-change binary and its architecture were kept, the same routed netlist was placed and routed twice, and the control reproduced the recorded baseline exactly -- 947 `Failed to route` lines, `clk` 943, `hclk5` 3, `clk27` 1 -- with its routed JSON differing from the archived one in exactly one key, `settings['cst.filename']`, which is a path, so any difference between the two runs is attributable to the architecture. The lane-fixed architecture produces the same 947 / 943 / 3 / 1 signature, which retires the "0 `hclk5` failures" criterion this project had implied, and moves the three `OSER10`s from `HCLK_OUT1` three times to `HCLK_OUT2`, `HCLK_OUT0` and `HCLK_OUT0`, while the HCLK block at `(81,181)` goes from driving lanes 1 and 3 to lanes 0 and 3 -- lane 0 for the serialisers, which is the lane the vendor's own build drives, and lane 3 for the `CLKDIV` that divides `hclk5` down to `hclk`. Packing then succeeds where the guard had been refusing: the `.fs` is `8ce8671df6723f5c5015428a50d94d31845c656fe24fecc7b68ff7abd5853484` at 35,752,331 bytes, converting through the repository's own `tools/fs-to-bin.py` to a `.bin` of `bb5d01cc90c22f5d03e9fefc948d1f0a074e491d55acdf3994c9574b95ff8c37` at 4,466,048 bytes, and the three serialisers decode with seven attributes -- `CLKOMUX 61`, `FCLKSEL1 81`, `FCLKSEL2 114`, `LSRIMUX_0 1`, `LSROMUX_0 1`, `OUTMODE 16`, `WRFCLKSEL 102` -- where the previous build carried three and no lane selection at all. `LSRIMUX_0` is the cycle's second change and it reverses entry 11: that removal rested on `TinyTang/build/desktop/source/impl/pnr/desktop.fs`, which entry 19 had already flagged as not the file that drives the working display, and re-measuring the working bitstream `e83e2d4afbd7...` shows `LSRIMUX_0 1` on its serialisers and on 314 ordinary IOLOGICs, so the revert restores them to the vendor's set and leaves the ordinary cells unchanged. Two claims are retracted with it: the packer's assertion that this die "has no `FCLKSEL0`/`FCLKSEL3` row", which the device's own table disproves, `FCLKSEL0` being id 79 on `HCLK0`, `HCLK1` and `HCLK3` and `FCLKSEL3` id 129 on `HCLK0` and `HCLK0_`, and which had been generalised from one measured `OSER4`; and the "0 `hclk5` failures" acceptance criterion. What is explicitly NOT established, and is written into the code and the evidence as open rather than acted on, is whether the four-attribute difference that remains at the serialisers is a difference in fuses at all: the decoder aliases `FCLKSEL` values onto the same fuses, since forcing `HCLK_OUT0` and `HCLK_OUT2` packs byte-identically and both decode as `FCLKSEL1 81`, so an attribute-list difference is not evidence of anything and the comparison has to be made at the fuse level at the three TMDS tiles or on the board, and nothing was loaded this cycle, which leaves the display a hypothesis rather than a result. Two environment facts were established rather than assumed. `msgspec`, which the bundle does not ship and which `save_chipdb`, `chipdb_builder` and `gowin_pack` all need, had been lost with `/tmp/tb/pydeps` when `/tmp` was cleared and is restored to `/home/vash/tools/pydeps`, with the documented `chipdb_builder` command verified back to byte-identical output against the recorded database hash before anything was changed. And `gowin_pack` loads the chipdb at pack time, so the database, the architecture and the packer must come from one apicula revision; mixing them fails with a bare `KeyError` from `get_simple_pip_fuses` that reads as a packer bug and is not, which `TOOLCHAIN.md` now records beside the corrected database, `.bba` and `.bin` hashes. The other measured device was regression-checked by building it rather than by argument: the GW5A-25A database is byte-identical before and after this change, which the device-scoped default makes true by construction and the paired build confirms. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 27 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Load the bitstream at `bb5d01cc...` and look at the display, which is the test this cycle could not run: if it is lit, the only work left is the unquantified `FCLKSEL0`/`FCLKSEL3`/`HWL` difference at the serialisers, and if it is dark that difference is the first thing to compare at the fuse level at the three TMDS tiles rather than as attribute lists, because the decoder aliases the values and the list cannot settle it. `scripts/build-clock-smoke.sh` still defaults its build to `/tmp/tb/...` and should be pointed somewhere durable the way `scripts/pnr-desktop.sh` was, and any re-run must regenerate the device database, the architecture and the packer's tables together. The desktop core still needs no change; the change site is not `gw5_hclk_arcs` or `gw5_create_hclk_iol_pip`; the vendor's lane is 0 and not 2; and the readings section 18 and section 19 list as refuted should not be re-walked.
+
+#### Files Modified:
+
+- patches/0002-iologic-encodable-fuses.patch
+- patches/0003-hclk-iol-fclk-lanes.patch
+- README.md
+- FINDINGS.md
+- TOOLCHAIN.md
+- evidence/desktop-clock-routing.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: N/A
+- User Test: N/A
+
+---

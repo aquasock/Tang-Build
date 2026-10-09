@@ -10,8 +10,13 @@ Tang Console 138K and talked over its UART.  The project's own desktop core now
 goes through the whole flow with the same tools — it places, routes, packs,
 loads over both JTAG and `tangload`, and runs on the board, answering on UART1
 at 2 Mbaud.  Its HDMI output is the one thing that does not yet work, and the
-reason is located rather than guessed: the route that carries the TMDS bit
-clock to the serialisers is missing inside nextpnr.
+reason is located rather than guessed: on this die an IOLOGIC's fast clock can
+only be selected from lanes 0 and 2, the three TMDS serialisers were served by
+lanes 1 and 3, and the packer dropped the unencodable lane without a word —
+leaving each serialiser's clock mux unselected, so no TMDS left the part.  The
+flow now offers an IOLOGIC only the encodable lanes, and the resulting
+bitstream carries the selection where the previous one carried none; the
+display itself is still to be confirmed on the board.
 
 ## Why this matters
 

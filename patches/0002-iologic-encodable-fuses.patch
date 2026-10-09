@@ -1,5 +1,5 @@
 diff --git a/apycula/gowin_pack.py b/apycula/gowin_pack.py
-index fb9f3ae..7419f21 100644
+index fb9f3ae..d661309 100644
 --- a/apycula/gowin_pack.py
 +++ b/apycula/gowin_pack.py
 @@ -675,11 +675,35 @@ class ChipDB:
@@ -61,3 +61,70 @@ index fb9f3ae..7419f21 100644
  
          if cell_parms['OUTMODE'] == 'DDRENABLE16':
              attr_vals.append(AttrVal('OUTMODE', 'DDRENABLE'))
+@@ -7395,8 +7426,30 @@ class GW5AST_138C(GW5A):
+         `FCLKSEL1=HCLK2` and `FCLKSEL2=HCLK2_`, and those three are exactly the
+         two fuses -- (0,123) and (3,131) -- by which the packer's set was a
+         strict subset of the vendor's.  Two selection attributes, not the
+-        GW5A-25A's four: this die spells the lane once plain and once with the
+-        trailing underscore, and has no `FCLKSEL0`/`FCLKSEL3` row for it.
++        GW5A-25A's four: this die spells the lane once plain (`FCLKSEL1`) and
++        once with the trailing underscore (`FCLKSEL2`).  That pair covers lanes
++        0, 1 and 2 plain and lanes 0, 2 and 3 underscored, so lanes 0 and 2 are
++        the only lanes it can complete -- which is why `chipdb.gw5_make_hclk_pips`
++        offers an IOLOGIC no other lane to route to.
++
++        A RETRACTION, because this paragraph used to claim that this die "has
++        no `FCLKSEL0`/`FCLKSEL3` row".  It has them.  Read out of the device's
++        own table (`logicinfo['IOLOGIC']` with `iologic_attrids`): `FCLKSEL0` is
++        id 79 and carries `HCLK0`, `HCLK1` and `HCLK3`; `FCLKSEL3` is id 129 and
++        carries `HCLK0` and `HCLK0_`.  The working vendor bitstream uses them --
++        its serialisers decode with all four values.  The old claim had been
++        generalised from one measured `OSER4`, the same error core-log entries
++        23 and 25 record twice.
++
++        Nothing is changed here on account of it, and that is a matter of
++        evidence rather than caution: the decoder ALIASES `FCLKSEL` values onto
++        the same fuses (entry 26 -- forcing `HCLK_OUT0` and `HCLK_OUT2` packs
++        byte-identically, and a decode reports both as `FCLKSEL1 81`), so a
++        difference in the *attribute list* is not evidence of a difference in
++        the fuses.  Our serialisers decoding with two values where the vendor's
++        decode with four is therefore not a finding yet.  Settle it at the fuse
++        level at the three TMDS tiles, or on the board, before changing what
++        this writes.
+ 
+         `sel_` is the attribute that takes the underscored spelling, or None
+         for a path that has only the plain one.
+@@ -7417,19 +7470,21 @@ class GW5AST_138C(GW5A):
+         die costs no fuse at all, so an output gearbox came out of it with its
+         `FCLK` unselected -- the two-bit gap `P3.T13` measured.
+ 
+-        The `LSRIMUX_0` the shared handler also emits belongs to the *input*
+-        half (`LSRIMUX` against the output's `LSROMUX`), so an output cell
+-        carrying it spends a fuse the vendor does not.  MEASURED against the
+-        vendor's own build of this project's desktop core, whose display works:
+-        `LSRIMUX_0` is set in ours and clear in theirs, one fuse per tile, the
+-        only difference found at the TMDS tiles -- and the TMDS tiles are
+-        `OSER10`s.  It is the same attribute the `IDDRC` override below drops
+-        for the same reason.
++        The `LSRIMUX_0` the shared handler also emits is KEPT.  Tang-Build
++        core-log entry 11 removed it here, measuring a Gowin build of this same
++        core in which `LSRIMUX_0` was clear -- but that build is
++        `TinyTang/build/desktop/source/impl/pnr/desktop.fs`, which entry 19 had
++        already flagged as not the file that drives the working display.  The
++        bitstream that does, `e83e2d4afbd7...`, carries `LSRIMUX_0 1` on its
++        serialisers and on every ordinary IOLOGIC -- re-measured for this
++        change with `gowin_unpack` rather than taken from the log -- and so does
++        this packer's own output everywhere except the output cells that
++        removal was scoped to, which left the three TMDS `OSER10`s as the only
++        IOLOGICs on the die without it.
+         """
+-        attrs = (super().get_out_iologic_attrs(bel)
+-                 + self.fclk_select_attrs(bel, 'FCLKSEL1', 'FCLKSEL2')
+-                 + self.oser16_aux_attrs(bel))
+-        return [av for av in attrs if av.attr != 'LSRIMUX_0']
++        return (super().get_out_iologic_attrs(bel)
++                + self.fclk_select_attrs(bel, 'FCLKSEL1', 'FCLKSEL2')
++                + self.oser16_aux_attrs(bel))
+ 
+     def get_IOLOGIC_DUMMY_fuses(self, bel: BelDesc) -> list[CellFuseBits]:
+         """ The aux half of a narrow output gearbox costs this die no fuse.
