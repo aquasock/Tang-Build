@@ -1,0 +1,110 @@
+# clock-smoke divider runs: is the ODIV scaling a bitstream property or a flake?
+#
+# Question: the same design measured clk27 at 1.0800 x sys_clk (54 MHz) and at
+# 0.5400 x sys_clk (27 MHz) on different loads.  Two things were varied here:
+# the bitstream (one defparam) and the power cycle.
+#
+# The variant differs from the committed design by exactly one line:
+#   fpga/clock-smoke/clock_smoke.v          defparam pll_27.ODIV0_SEL = 50;
+#   variant B (/tmp/tb/variant-B/src/...)   defparam pll_27.ODIV0_SEL = 100;
+#
+# Packer determinism was checked first, three packs from one P&R JSON plus the
+# file that was loaded:
+#   78227dd66d75521230be62e1efbc1d2ba84119ebad993ac6aa4c8701820f23ea  x4, cmp clean
+
+RUNS WITHOUT A POWER CYCLE (loaded on top of whatever was running)
+  A  loaded baseline   -> 1.0800 x sys_clk      (= baseline, correct)
+  B  loaded variant B  -> 1.0800 x sys_clk      (= baseline: the load did NOT take)
+  C  loaded baseline   -> 0.5400 x sys_clk      (= variant B: the load did NOT take)
+  Every unrebooted run measured the bitstream loaded BEFORE it.  The two
+  bitstreams emit character-identical text, so a stale load was invisible.
+
+RUNS WITH A POWER CYCLE BEFORE EACH LOAD
+  bitstream    ODIV0   clk27 x sys_clk   bit-12 edges/line   capture
+  run 1  baseline  50   1.0800       4423.7    /tmp/tb/runs/run1-baseline.bin
+  run 3  baseline  50   1.0800       4423.7    /tmp/tb/runs/run3-baseline.bin
+  run 2  variant-B  100   0.5400       2211.8    /tmp/tb/runs/run2-variantB.bin
+  run 4  variant-B  100   0.5400       2211.8    /tmp/tb/runs/run4-variantB.bin
+
+  Reproduced 2/2 within each bitstream, to four significant figures.
+  hclk followed clk27 in every run (1.4850 or 2.9700 x sys_clk), as did the
+  lock bits (11 on every line of every run).
+
+READING
+  ODIV0_SEL = 50 divides by 25; ODIV0_SEL = 100 divides by 50.  The effective
+  division is half the requested value, so pll_27's 1350 MHz VCO arrives at
+  54 MHz where 27 was asked for.  This is not a flaky lock and not a fixed
+  encoding error: it is deterministic and it scales with the request.
+
+  The halving is NOT uniform across values.  pll_hdmi carries ODIV0_SEL = 4
+  and measured correct in these same runs (hclk 74.2452 MHz, so hclk5
+  371.25 MHz as designed).  Where the boundary lies is not known.
+
+  Consequence: the desktop core's pll_27 carries ODIV0_SEL = 50 too, so its
+  clk27 is 54 MHz and its pixel clock 148.5 MHz where the monitor expects
+  74.25.  Changing that one number to 100 is the next thing to test, and the
+  display is finally the observable.
+
+==================================================================
+decoder output for the four rebooted runs
+==================================================================
+
+--- run 1: /tmp/tb/runs/run1-baseline.bin (30.028842 s) ---
+  UART anchor (434 x 115200 baud)          49.9968 MHz
+  cadence     (2^25 / line period)     48.0485 MHz
+  agreement                              3.897 %
+
+PLL lock bits (pll_27, pll_hdmi): 11 x44
+
+clocks, from counted bit-12 edges (8192 cycles each):
+  clk27                      1.0800 x sys_clk   (=  53.9965 MHz at the anchor)
+                             4423.7 bit-12 edges per line, 43 samples used, 0 skipped
+                           designed 0.5400 x sys_clk;  doubled would be 1.0801
+  hclk (CLKDIV output)       2.9700 x sys_clk   (= 148.4905 MHz at the anchor)
+                            12165.1 bit-12 edges per line, 43 samples used, 0 skipped
+                           designed 1.4851 x sys_clk;  doubled would be 2.9702
+
+--- run 3: /tmp/tb/runs/run3-baseline.bin (30.024893 s) ---
+  UART anchor (434 x 115200 baud)          49.9968 MHz
+  cadence     (2^25 / line period)     48.0548 MHz
+  agreement                              3.884 %
+
+PLL lock bits (pll_27, pll_hdmi): 11 x44
+
+clocks, from counted bit-12 edges (8192 cycles each):
+  clk27                      1.0800 x sys_clk   (=  53.9965 MHz at the anchor)
+                             4423.7 bit-12 edges per line, 43 samples used, 0 skipped
+                           designed 0.5400 x sys_clk;  doubled would be 1.0801
+  hclk (CLKDIV output)       2.9700 x sys_clk   (= 148.4905 MHz at the anchor)
+                            12165.1 bit-12 edges per line, 43 samples used, 0 skipped
+                           designed 1.4851 x sys_clk;  doubled would be 2.9702
+
+--- run 2: /tmp/tb/runs/run2-variantB.bin (30.025332 s) ---
+  UART anchor (434 x 115200 baud)          49.9968 MHz
+  cadence     (2^25 / line period)     48.0541 MHz
+  agreement                              3.886 %
+
+PLL lock bits (pll_27, pll_hdmi): 11 x44
+
+clocks, from counted bit-12 edges (8192 cycles each):
+  clk27                      0.5400 x sys_clk   (=  26.9982 MHz at the anchor)
+                             2211.8 bit-12 edges per line, 43 samples used, 0 skipped
+                           designed 0.5400 x sys_clk;  doubled would be 1.0801
+  hclk (CLKDIV output)       1.4850 x sys_clk   (=  74.2452 MHz at the anchor)
+                             6082.6 bit-12 edges per line, 43 samples used, 0 skipped
+                           designed 1.4851 x sys_clk;  doubled would be 2.9702
+
+--- run 4: /tmp/tb/runs/run4-variantB.bin (30.029087 s) ---
+  UART anchor (434 x 115200 baud)          49.9968 MHz
+  cadence     (2^25 / line period)     48.0481 MHz
+  agreement                              3.898 %
+
+PLL lock bits (pll_27, pll_hdmi): 11 x44
+
+clocks, from counted bit-12 edges (8192 cycles each):
+  clk27                      0.5400 x sys_clk   (=  26.9982 MHz at the anchor)
+                             2211.8 bit-12 edges per line, 43 samples used, 0 skipped
+                           designed 0.5400 x sys_clk;  doubled would be 1.0801
+  hclk (CLKDIV output)       1.4850 x sys_clk   (=  74.2452 MHz at the anchor)
+                             6082.6 bit-12 edges per line, 43 samples used, 0 skipped
+                           designed 1.4851 x sys_clk;  doubled would be 2.9702

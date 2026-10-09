@@ -212,3 +212,33 @@ Settle the divider question without the board, since the next step needs no hard
 - User Test: FAIL
 
 ---
+
+## 8 COMMIT Unreleased 2026-10-08T22:30:58-07:00
+
+#### Coming From:
+
+Unreleased e80a9a8
+
+#### Purpose:
+
+Separate the two things that were varying at once in entry 7's factor of two, the bitstream and the state the board was in, by power-cycling before every run.
+
+#### Outcome:
+
+The factor of two entry 7 recorded was not a property of the design, and this cycle separated the two things that had been varying at once. The instrument was corrected first: `tools/decode-clock-smoke.py` averaged edge deltas without normalising by the line-counter step, so samples spanning two line periods read as a doubled clock, which is what the earlier control run's `min 2211, max 4440` actually was; only deltas of exactly one line period are used now. The packer was then checked directly, because a nondeterministic packer would have explained everything: three packs of the same P&R JSON and the file that was loaded are byte-identical at `sha256 78227dd6...`, so the bitstream is not the variable. The user then proposed and ran the decisive protocol, a power cycle before every load, and it exposed something that had been corrupting readings all session: an SRAM load without a power cycle does not take effect. The three runs made without one fit a strict one-behind pattern, baseline loaded and read as baseline, variant B loaded and read as baseline, baseline loaded and read as variant B, and it had been invisible because the two bitstreams emit character-identical text. With a power cycle before each load the measurement reproduces. The two bitstreams differ by one `defparam`, `pll_27.ODIV0_SEL = 50` against `100`, and four rebooted runs gave two clean pairs, `50` twice at `1.0800 x sys_clk` with 4423.7 bit-12 edges per line and `100` twice at `0.5400 x sys_clk` with 2211.8, `hclk` following at 2.9700 and 1.4850 and `lock=11` on every line of every run. So the requested divider value is effectively halved: 50 divides by 25 and puts the 1350 MHz VCO at 54 MHz, 100 divides by 50 and puts it at the designed 27 MHz. The halving is not uniform, `pll_hdmi` carrying `ODIV0_SEL = 4` and measuring correct in those same runs, so where the boundary lies is not known. The consequence that matters is that the desktop core's own `pll_27` carries `ODIV0_SEL = 50`, which makes its `clk27` 54 MHz and its pixel clock 148.5 MHz where the monitor expects 74.25, and that one number is now the next thing to test; the four captures and this reasoning are in `evidence/clock-smoke-divider-runs.txt`. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and `core-log.md` was, and validated this entry as number 8 of the active log with a conforming header, six sections in canonical order, prose in Outcome and Next Steps, and an allowed Status set. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Reproduce the divider result before acting on it, since the one-behind behaviour shows how easily a measurement here can be of the wrong thing: six power-cycled runs of one bitstream, all of which must read the same ratio. Once that holds, change `pll_27`'s `ODIV0_SEL` from 50 to 100 in the desktop core, build it with the project's own scripts, load it after a power cycle, and look at the display, which is the observable this whole line of work has been missing. `pll_hdmi` should be left alone, having measured correct in these runs. If the display comes up then the same change belongs upstream in the fork's packer rather than in the RTL, because halving the requested divider is a scaling fault that every PLL this project builds inherits. The board is left running variant B in SRAM and a power cycle returns it to its flash core.
+
+#### Files Modified:
+
+- tools/decode-clock-smoke.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: NOT RUN
+
+---
