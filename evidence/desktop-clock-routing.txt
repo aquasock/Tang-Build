@@ -633,3 +633,69 @@ dedicated HCLK network -- entry 16's recovered binary plus the regenerated
 database are the instrument -- or that the packer must be able to express a
 fabric-routed FCLK, which it cannot at 371.25 MHz.  The router side is the
 real one.
+
+==================================================================
+17. Settled: the IOLOGIC mux encodes lanes 0 and 2 only
+==================================================================
+
+Two checks, and together they close it.
+
+FIRST, the link section 16 inferred is FALSE.  `bel.fclk` is not `None`:
+nextpnr's routed JSON carries, on all three OSER10s,
+
+    IOLOGIC_FCLK: 'HCLK_OUT1'
+
+so the attribute is set and names a lane.  `gowin_pack.set_iologic_bel_fclk`
+maps `HCLK_OUT0..3` to `SPINE10..SPINE13`, so `HCLK_OUT1` becomes `SPINE11`,
+`_fclk_lane` gives lane 1, and `fclk_select_attrs` runs and writes
+`WRFCLKSEL` -- which is why `WRFCLKSEL` is in our decode and the lane pair is
+not.  The mechanism in section 16 is right; the specific cause (fclk None) is
+wrong.
+
+SECOND, the positive test.  The three OSER10s' `IOLOGIC_FCLK` was rewritten to
+`HCLK_OUT2` in the routed JSON and the design repacked, no route re-run:
+
+    forced HCLK_OUT2 -> [('CLKOMUX',61), ('FCLKSEL1',81), ('FCLKSEL2',114),
+                         ('OUTMODE',16), ('WRFCLKSEL',102)]
+    actual HCLK_OUT1 -> [('CLKOMUX',61), ('OUTMODE',16), ('WRFCLKSEL',102)]
+
+The bitstream hash changed, so the attribute is read; and with lane 2 the
+`FCLKSEL1`/`FCLKSEL2` pair appears, at 81 = `HCLK2` and 114 = `HCLK2_`.
+With lane 1 it does not, and nothing warns.
+
+Put beside the working bitstream's serialisers:
+
+    FCLKSEL0 79 = HCLK0     FCLKSEL1 81  = HCLK2
+    FCLKSEL2 114 = HCLK2_   FCLKSEL3 86  = HCLK0_
+
+THE IOLOGIC'S FAST-CLOCK MUX ENCODES LANES 0 AND 2.  `FCLKSEL0`/`FCLKSEL3`
+carry the HCLK0 pair and `FCLKSEL1`/`FCLKSEL2` the HCLK2 pair; lanes 1 and 3
+have no representation in those attributes.  Our run lands the FCLK on lane 1,
+the packer writes `FCLKSEL1 = HCLK1` and `FCLKSEL2 = HCLK1_`, those values have
+no fuse rows, and the attributes are dropped in silence.  The clock mux is
+left unselected, so the serialiser has no bit clock.
+
+The chain, complete and each link measured:
+
+  1. nextpnr cannot route `hclk5` on the dedicated network and falls back
+  2. the FCLK is sourced from lane 1
+  3. the mux encodes lanes 0 and 2 only
+  4. the packer drops the lane-1 pair without a word
+  5. unselected mux, no bit clock, no TMDS, dark screen
+
+The vendor's serialisers take lane 2, the PLL's own lane, which is the case the
+previous session measured and calibrated against -- and why their fix works
+for Gowin's layout and not for ours.
+
+WHAT IS NOT YET KNOWN, and it decides the fix.  Whether lanes 1 and 3 are
+IMPOSSIBLE on this silicon or merely UNPOPULATED in the tables.  The packer's
+comment asserts "this die ... has no `FCLKSEL0`/`FCLKSEL3` row for it", which
+the working bitstream disproves -- it carries all four -- so that comment was
+generalised from one measured cell.  The two cases need different fixes:
+constrain nextpnr to lanes 0 and 2, or populate the tables for 1 and 3.  The
+available vendor bitstreams can answer it and have not been scanned.
+
+Note also, from the same comparison: `lsrimux_0` and `lsromux_0` are present
+in the working bitstream's serialisers and absent from ours, so the
+`LSRIMUX_0` fix of entry 11 removed one fuse and evidently did not restore the
+pair.

@@ -665,3 +665,33 @@ None.
 - User Test: N/A
 
 ---
+
+## 23 COMMIT Unreleased 2026-10-09T07:17:21-07:00
+
+#### Coming From:
+
+Unreleased 561cfe2
+
+#### Purpose:
+
+Run the two checks entry 22 named -- whether `bel.fclk` really is `None`, and whether the packer can encode the lane our serialisers are on -- and settle the chain before writing any fix.
+
+#### Outcome:
+
+Both were run and between them the cause is settled, though not in the shape entry 22 gave it. The first check refutes that entry's inferred link: nextpnr's routed JSON carries `IOLOGIC_FCLK: 'HCLK_OUT1'` on all three OSER10s, so the attribute is set and names a lane; `gowin_pack.set_iologic_bel_fclk` maps `HCLK_OUT0..3` to `SPINE10..SPINE13`, `HCLK_OUT1` becomes `SPINE11`, `_fclk_lane` gives lane 1, and `fclk_select_attrs` does run -- which is why `WRFCLKSEL`, one of the three attributes it writes, is present in our decode while the lane pair is not. The mechanism was right and the specific cause was wrong. The second check is positive and decisive: the three `IOLOGIC_FCLK` attributes were rewritten to `HCLK_OUT2` in the routed JSON and the design repacked without re-routing, and the `FCLKSEL1`/`FCLKSEL2` pair appeared, at 81 = `HCLK2` and 114 = `HCLK2_`, where with lane 1 they do not appear at all and nothing warns. The bitstream hash changed between the two packs, so the attribute is genuinely read. Put beside the working bitstream's serialisers, which carry `FCLKSEL0` 79 = `HCLK0`, `FCLKSEL1` 81 = `HCLK2`, `FCLKSEL2` 114 = `HCLK2_` and `FCLKSEL3` 86 = `HCLK0_`, the conclusion is that the IOLOGIC's fast-clock mux encodes lanes 0 and 2 and has no representation for lanes 1 or 3. Our run lands the FCLK on lane 1, the packer writes values with no fuse rows, and the attributes are dropped in silence, leaving the clock mux unselected and the serialiser without a bit clock. What is established is the whole chain, each link measured rather than inferred: the router cannot use the dedicated network and falls back; the fallback sources the FCLK from lane 1; the mux encodes lanes 0 and 2 only; the packer drops the lane-1 pair silently; and the unselected mux is what leaves the display dark. What is NOT yet known, and it decides which fix is right, is whether lanes 1 and 3 are impossible on this silicon or merely unpopulated in the tables -- the packer's comment asserts this die has no `FCLKSEL0`/`FCLKSEL3` row, which the working bitstream disproves by carrying all four, so that comment was generalised from one measured cell just as this cycle's predecessor was. One more difference from the same comparison is recorded rather than explained: `LSRIMUX_0` and `LSROMUX_0` are present in the working bitstream's serialisers and absent from ours, so entry 11's fix removed one fuse and did not restore the pair. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 23 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Settle what the fix must do before writing it, because the two possibilities need opposite changes and the available evidence can decide between them: scan the vendor bitstreams already in the tree -- there are three dozen `desktop*.bin` under `TinyTang/build/` matched by hash, plus their `.fs` siblings -- for any IOLOGIC whose `FCLKSEL` selects lane 1 or lane 3, which would show the mux can encode them and make the fix a matter of populating tables rather than constraining placement. If none exists, constrain the flow instead: nextpnr must not source an IOLOGIC FCLK from lane 1 or 3, and the packer must raise rather than silently dropping a value it cannot encode, so that a bitstream with an unclocked serialiser cannot be built at all. The packer guard is worth writing either way, since a silent miscompile is what let this through six cycles of investigation. The desktop core needs no change, and the refuted links -- fclk `None` (22) and the retraction of the lane entry (21) -- should not be re-walked.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---
