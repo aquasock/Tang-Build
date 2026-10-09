@@ -1,0 +1,137 @@
+# clock-smoke sweep, step 1: the divider is a straight divisor, measured
+
+# Design:   fpga/clock-smoke/clock_smoke.v -- pll_27's ODIV0_SEL moved 50 -> 100,
+#           and lane 4's modulus corrected to the achievable frequency
+# Built:    scripts/build-clock-smoke.sh
+# Bitstream: 34,668,145 bytes
+#          sha256 57dcef1c9ba269db1b2b0537a3d53022656c138f9f652a3445b06f2b6d01fd9a
+# Loaded:   openFPGALoader -b tangconsole, one-wire, SRAM, after a power cycle
+# Captured: /dev/ttyUSB1 at 115200, 60 s -> 90 lines
+
+==================================================================
+1. Why this is the first sweep step
+==================================================================
+
+The goal is to show a PLL takes a divider and produces the frequency asked for.
+`ODIV0_SEL` is the field whose interpretation this project got wrong for five
+core-log entries: entries 8 and 9 read it as one that HALVES the requested
+divisor, on the strength of a decoder that was itself multiplying every rate by
+two.  With that factor removed, the recorded variant-B runs say the field is a
+STRAIGHT DIVISOR, so 100 must halve the output.
+
+That is exactly the value the desktop core carries as a workaround, so the step
+is both the sweep's first rung and a test of a live defect.
+
+==================================================================
+2. The drift the user saw, and what it was
+==================================================================
+
+Before this build the user reported that lane 4 walked against lanes 1-3: a
+small fast phase shift, no longer in sync after two or three minutes, while
+1-3 stayed locked.  They also estimated the beat at "maybe an hour" and said
+they would have liked to catch it but it was too slow to watch.
+
+They were right, and it was this project's arithmetic rather than the PLL's.
+`pll_nes` has a 2000 MHz VCO and a divider of 93, so it produces 21.505376 MHz
+and cannot produce a round 21.5.  The modulus had been written for 21.5.
+
+Three ways agreed, and a fourth settled it:
+
+  * the user's eye:  lane 4 drifting against 1-3, beat ~1 hour
+  * arithmetic:      21.505376/21.5 - 1 = 250 ppm -> 1/250e-6 = 4000 s = 67 min
+  * a 180 s capture: lanes 1, 2 and 3 all blink at 0.999936 Hz, lane 4 at
+                     1.000185 Hz -> +249.2 ppm -> beat 0.2492 mHz -> 66.9 min
+  * the ratios:      clk_nes measured within -0.8 ppm of its designed ratio, so
+                     the PLL is exact and the drift had to be the modulus
+
+That last one is the decisive one.  The measured ratios are REFERENCE-FREE --
+both the clock and sys_clk scale with the same crystal, so its error cancels --
+which is what makes this a PLL measurement rather than a crystal measurement:
+
+  clk27    +0.2 ppm from its designed ratio
+  hclk     -0.3 ppm
+  clk_nes  -0.8 ppm
+
+All three at the limit of what 398 lines resolve.
+
+And the shared explanation for lanes 1-3 standing still: their nominals are
+exact and the crystal's -65 ppm error is common to all three, and a common error
+is a fixed phase offset rather than a drift.  Only lane 4 had an error the others
+did not share.
+
+A side result worth keeping: the 1 Hz panel resolved a 249 ppm difference by eye
+over two or three minutes.  An earlier reading in this project dismissed 1 Hz
+LEDs as far too coarse for anything small and prescribed a TIA for the work; the
+eye is better than that, and a few hundred ppm -- which is where integer dividers
+actually land -- is visible.
+
+==================================================================
+3. The fix
+==================================================================
+
+Lane 4's modulus is now 10,752,688 cycles, half a second at the 21.505376 MHz the
+divider can actually produce, and the comment above it says why.  A modulus taken
+from a requested frequency instead of an achievable one is a deliberate drift,
+and it belongs in a test rather than in a default.
+
+Lanes 1 and 4 now compute to the same blink rate, 0.999936 Hz, so they hold
+phase.
+
+==================================================================
+4. The measurement: halved exactly, and the independent PLL untouched
+==================================================================
+
+  90 lines over 60 s, every one of them `lock=111`, no sample skipped:
+
+    clk27    0.2700 x sys_clk  =  13.4992 MHz   was 0.5400 / 26.9982
+    hclk     0.7425 x sys_clk  =  37.1226 MHz   was 1.4850 / 74.2452
+    clk_nes  0.4301 x sys_clk  =  21.5040 MHz   UNCHANGED
+
+`ODIV0_SEL = 100` halves `pll_27`'s output, and `pll_hdmi` follows because its
+reference is clk27: its VCO lands at 742.5 MHz, still inside the fitted 650-1300
+band, and it locks -- all 90 lines say so.  `pll_nes` did not move at all, which
+is the tree's dependency structure shown on hardware: it runs from the crystal,
+not from clk27.
+
+One divider changed, exactly the two clocks downstream of it moved by exactly the
+predicted factor, and the independent one did not.  That is the sweep working and
+the shape of it is the answer to "drive them any way I want".
+
+The user reports all four heartbeat lanes locked and holding, with the drift gone.
+
+==================================================================
+5. What it means for the desktop core
+==================================================================
+
+The desktop core carries `ODIV0_SEL = 100` -- the workaround entries 10 and 11
+landed on the strength of the decoder error.  Measured here, that value halves
+its `pll_27` to 13.5 MHz, which halves `pll_hdmi`'s VCO to 742.5 MHz, which puts
+its **hclk5 at 185.625 MHz instead of 371.25** -- half the TMDS bit clock.  It is
+in the bitstream loaded on 2026-10-09.
+
+Entry 11's comparison of two pixel rates still stands and the pixel clock is still
+not the display's cause; what this does is remove a known 2x defect from a core
+that is carrying it, before the unknown one is tested again.  One number: 100
+goes back to 50.
+
+==================================================================
+6. Reproducing, and what is open
+==================================================================
+
+  bash scripts/build-clock-smoke.sh
+  # power-cycle the board first, always -- TOOLCHAIN.md, board side
+  openFPGALoader -b tangconsole /home/vash/tools/clock-smoke/clock-smoke.fs
+  stty -F /dev/ttyUSB1 115200 raw -echo ; timeout 60 cat /dev/ttyUSB1 > cap.bin
+  python3 tools/decode-clock-smoke.py cap.bin --seconds 60
+
+Open, and small:
+
+  * the CASCADE ORDER the user reported, lanes 3 then 2 then 1, is not what the
+    clock tree implies -- sys_clk should start first, having no PLL to lock, then
+    clk27, then hclk after two PLLs and the CLKDIV.  A mirrored numbering is ruled
+    out by the chaser's in-order 1-to-8 walk, so it is something else.  The UART
+    cannot see phase, so this needs either a phase instrument or a deliberate
+    test, and it is not blocking anything.
+  * the sweep's remaining rungs: other dividers, other PLLs, and a deliberately
+    fast beat -- a 1% offset turns the 67-minute beat into about ten seconds and
+    makes the arithmetic visible in one glance.

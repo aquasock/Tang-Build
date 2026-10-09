@@ -21,7 +21,11 @@ is a spare held high:
   LED 1  sys_clk   50.00 MHz  heartbeat, 1 Hz    (modulus 25,000,000)
   LED 2  clk27     27.00 MHz  heartbeat, 1 Hz    (modulus 13,500,000)
   LED 3  hclk      74.25 MHz  heartbeat, 1 Hz    (modulus 37,125,000)
-  LED 4  clk_nes   21.50 MHz  heartbeat, 1 Hz    (modulus 10,750,000)
+  LED 4  clk_nes   21.505376 MHz  heartbeat, 1 Hz  (modulus 10,752,688)
+         NOTE: this lane's modulus was first written for a round 21.5 MHz, which
+         the divider cannot produce (VCO 2000 / 93 = 21.505376), and it drifted
+         249 ppm against the other three.  Corrected, and the measurement is in
+         clock-smoke-sweep.txt section 2.
   LED 5  pll_27    LOCK       steady
   LED 6  pll_hdmi  LOCK       steady
   LED 7  pll_nes   LOCK       steady

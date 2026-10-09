@@ -925,3 +925,37 @@ Run the sweep, which is what the instrument was built for and is now a script ra
 - User Test: PASS
 
 ---
+
+## 31 COMMIT Unreleased 2026-10-09T10:45:09-07:00
+
+#### Coming From:
+
+Unreleased cc313c0
+
+#### Purpose:
+
+Run the sweep's first step by setting pll_27's ODIV0_SEL to the value whose meaning five entries got wrong, and diagnose the phase drift the user reported on one lane.
+
+#### Outcome:
+
+The divider is a straight divisor, measured on silicon, and the drift was this project's arithmetic rather than the PLL's. The user reported that lane 4 walked against lanes 1 to 3 -- a small fast phase shift, plainly out of sync after two or three minutes, while 1 to 3 stayed locked -- and estimated the beat at about an hour, saying they would have liked to catch it but could not watch that long. They were right on both counts and wrong about the cause: pll_nes has a 2000 MHz VCO and a divider of 93, so it produces 21.505376 MHz and cannot produce a round 21.5, and the modulus had been written for 21.5, a 250 ppm error. Four independent views agree. The eye gave a beat of about an hour; arithmetic gives 250 ppm, one slip every 4000 s or 67 minutes; a 180-second capture gives lanes 1 to 3 all blinking at 0.999936 Hz against lane 4 at 1.000185 Hz, a difference of 249.2 ppm and a beat of 0.2492 mHz, one slip every 66.9 minutes; and the measured ratios settle the cause, because clk_nes sits within 0.8 ppm of its designed ratio and the PLL is therefore exact. Those ratios are reference-free -- both the clock and sys_clk scale with the same crystal so its error cancels -- which is what makes this a PLL measurement and not a crystal one: clk27 landed 0.2 ppm from its designed ratio, hclk 0.3 and clk_nes 0.8, all three at the limit of what 398 lines resolve. Lanes 1 to 3 stand still for the same reason: their nominals are exact and the crystal's 65 ppm error is common to all three, and a common error is a fixed phase offset rather than a drift. The modulus is corrected to 10,752,688 cycles, half a second at the achievable 21.505376 MHz, with a comment saying that a modulus taken from a requested frequency rather than an achievable one is a deliberate drift and belongs in a test rather than a default. A side result is recorded because it corrects an earlier claim: the 1 Hz panel resolved a 249 ppm difference by eye in two or three minutes, where an earlier reading here dismissed 1 Hz LEDs as far too coarse for anything small and prescribed a TIA for the work. The sweep step itself then measured cleanly: with pll_27's ODIV0_SEL taken from 50 to 100, clk27 reads 0.2700 times sys_clk or 13.4992 MHz against 0.5400 before, hclk reads 0.7425 or 37.1226 against 1.4850, and clk_nes is UNCHANGED at 0.4301 -- 90 lines over 60 seconds, every one of them lock=111, no sample skipped. pll_hdmi follows because its reference is clk27, its VCO landing at 742.5 MHz which is still inside the fitted 650 to 1300 MHz band, which is why it still locks; pll_nes does not move at all, because it runs from the crystal and not from clk27, so the tree's dependency structure is now shown on hardware rather than argued. One divider changed, exactly the two clocks downstream of it moved by exactly the predicted factor, the independent one did not, and the user reports all four heartbeat lanes locked and holding with the drift gone -- which is the capability this cycle was for. The consequence matters more than the demonstration. The desktop core carries ODIV0_SEL = 100, the workaround entries 10 and 11 landed on the strength of the decoder error, and it is now MEASURED that the value halves its pll_27 to 13.5 MHz, halves pll_hdmi's VCO to 742.5, and puts its hclk5 at 185.625 MHz instead of 371.25 -- half the TMDS bit clock, in the bitstream loaded on 2026-10-09. Entry 11's comparison of two pixel rates still stands and the pixel clock is still not the display's cause; what this does is remove a known two-times defect from a core that is carrying it before the unknown one is tested again. One thing the user raised and this entry leaves open: the CASCADE ORDER they see, lane 3 then lane 2 then lane 1, is not what the clock tree implies, since sys_clk should start first with no PLL to lock and hclk last after two PLLs and the CLKDIV; a mirrored numbering is ruled out by the chaser's in-order walk, the UART cannot see phase, and it needs either a phase instrument or a deliberate test. `FINDINGS.md` section 7 now puts the ODIV0 revert first and says why, `evidence/desktop-display-cycle.txt` carries the measurement beside its correction banner, the panel evidence records the corrected modulus, and `evidence/clock-smoke-sweep.txt` holds the drift diagnosis, the fix, the sweep measurement and what remains open. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 31 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Revert the desktop core's `ODIV0_SEL` from 100 to 50, rebuild it and load it after a power cycle, because that single number is now measured to halve its pll_27 and therefore its hclk5 to 185.625 MHz, and a core carrying a known two-times defect should not be used to test an unknown one; the HDMI is the next thing after that, with sections 18 and 19 of `evidence/desktop-clock-routing.txt` still the handoff for it. Continue the sweep from here, since the mechanism is proven and each rung is cheap: a deliberately fast beat is the best next one, because a one per cent offset turns the 67-minute beat into about ten seconds and makes the arithmetic visible in a single glance, and other dividers on other PLLs follow the same shape. Give the cascade order a real look when a phase instrument exists or a deliberate test can be built, since it is the one observation from the user that no counter here can confirm or deny. Keep the power-cycle rule on every load, keep `/home/vash/tools` as the durable home for builds, and do not re-walk the doubled clocks or the ODIV0 halving, both corrected in entry 30 and both now measured here.
+
+#### Files Modified:
+
+- fpga/clock-smoke/clock_smoke.v
+- evidence/clock-smoke-sweep.txt
+- evidence/clock-smoke-panel.txt
+- evidence/desktop-display-cycle.txt
+- FINDINGS.md
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

@@ -195,7 +195,13 @@ settle it outright.
 
 ## 7. Next steps
 
-1. Confirm the display on the board.  The lane constraint is in the flow and
+1. **First revert the desktop core's `ODIV0_SEL` from 100 to 50.**  With the
+   decoder's 2x factor removed, that value is *measured* to halve `pll_27`,
+   and therefore `pll_hdmi`'s VCO and `hclk5` with it — to 185.625 MHz instead
+   of 371.25, half the TMDS bit clock.  The workaround landed in entries 10-11
+   rested on the decoder error, and a core carrying a known 2x defect should not
+   be used to test an unknown one.
+2. Confirm the display on the board.  The lane constraint is in the flow and
    the bitstream now carries `FCLKSEL1`/`FCLKSEL2` at all three serialisers
    where it previously carried no lane selection at all, but nothing has yet
    been loaded since.  One offline question is still open beside it, and it is
@@ -204,7 +210,7 @@ settle it outright.
    `FCLKSEL` values onto the same fuses, so an attribute-list difference is not
    evidence of a fuse difference.  If the display is still dark, compare the
    fuses at the three TMDS tiles before changing what the packer emits.
-2. `scripts/build-clock-smoke.sh`'s `/tmp` defaults are repaired — its output
+3. `scripts/build-clock-smoke.sh`'s `/tmp` defaults are repaired — its output
    directory, its nextpnr directory and its Python dependency directory now
    point at durable paths under `/home/vash/tools`, and it refuses
    oss-cad-suite's nextpnr by path with the reason spelled out.  The caution
@@ -212,7 +218,7 @@ settle it outright.
    time, so the nextpnr binary and the device database must be regenerated
    together, and a routed netlist from an older architecture does not pack
    against a newer database.
-3. The core itself needs no change for any of the above, and should not be
+4. The core itself needs no change for any of the above, and should not be
    rebuilt until the route works.
 
 ## 8. Provenance note

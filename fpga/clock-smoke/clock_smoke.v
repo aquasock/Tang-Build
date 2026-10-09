@@ -147,7 +147,15 @@ module clock_smoke (
     defparam pll_27.FBDIV_SEL = 1;
     defparam pll_27.MDIV_SEL = 27;
     defparam pll_27.MDIV_FRAC_SEL = 0;
-    defparam pll_27.ODIV0_SEL = 50;
+    // SWEEP STEP 1.  ODIV0_SEL is the field whose interpretation was wrong for
+    // five core-log entries: with the decoder's 2x factor removed the recorded
+    // variant-B runs say it is a STRAIGHT DIVISOR, so 100 must halve this
+    // output to 13.5 MHz and carry hclk5 down with it to 185.625.  If clk27
+    // measures 0.2700 x sys_clk instead of 0.5400, the divisor reading is
+    // confirmed on silicon and the desktop core's ODIV0_SEL = 100 is the 2x
+    // error entry 30 says it is.  If it stays at 0.5400, that value is special
+    // and the old halving reading was right after all.
+    defparam pll_27.ODIV0_SEL = 100;
     defparam pll_27.CLKOUT0_EN = "TRUE";
     defparam pll_27.CLKFB_SEL = "INTERNAL";
 
@@ -543,7 +551,14 @@ module clock_smoke (
     localparam integer DIV_SYS   = 25_000_000;   // 50.00 MHz x 0.5 s
     localparam integer DIV_CLK27 = 13_500_000;   // 27.00 MHz x 0.5 s
     localparam integer DIV_HCLK  = 37_125_000;   // 74.25 MHz x 0.5 s
-    localparam integer DIV_NES   = 10_750_000;   // 21.50 MHz x 0.5 s
+    // pll_nes cannot make a round 21.5 MHz: its VCO is 2000 MHz and its divider
+    // is 93, so it produces 2000/93 = 21.505376 MHz.  This modulus is half a
+    // second at THAT value, not at 21.5.  The first version used 21.5 and the
+    // lane drifted 249 ppm against the other three -- one slip every 67 minutes,
+    // which the user saw by eye and the UART then measured to 0.2%.  A modulus
+    // taken from a requested frequency rather than an achievable one is a
+    // deliberate drift, and it belongs in a test, not in a default.
+    localparam integer DIV_NES   = 10_752_688;   // 21.505376 MHz x 0.5 s
 
     reg [24:0] hb_sys;
     reg [23:0] hb_27;

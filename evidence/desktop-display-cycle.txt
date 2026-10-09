@@ -10,6 +10,10 @@
 # straight divisor, so 50 divides by 50 -- which is what the design asks for -- and
 # ODIV0_SEL=100 halves the output to 13.5 MHz.  Any workaround that changed 50 to 100
 # on the strength of these numbers is a 2x error.  See core-log entry 30.
+# MEASURED 2026-10-09: ODIV0_SEL=100 does halve the output on silicon, so that
+# workaround puts this core's hclk5 at 185.625 MHz instead of 371.25 -- half the
+# TMDS bit clock.  See evidence/clock-smoke-sweep.txt section 5.  It is in the
+# bitstream loaded on 2026-10-09.
 #
 # desktop core: packing it, and why the display is still dark
 
