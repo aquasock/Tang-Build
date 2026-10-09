@@ -1,5 +1,5 @@
 diff --git a/apycula/gowin_pack.py b/apycula/gowin_pack.py
-index fb9f3ae..ae8d4a3 100644
+index fb9f3ae..7419f21 100644
 --- a/apycula/gowin_pack.py
 +++ b/apycula/gowin_pack.py
 @@ -675,11 +675,35 @@ class ChipDB:
@@ -39,3 +39,25 @@ index fb9f3ae..ae8d4a3 100644
  
      def get_iologic_fuse_cell(self, x: int, y: int, idx_str: str) -> Coord:
          """ The cell one IOLOGIC half's fuses are written into.
+@@ -2296,11 +2320,18 @@ class Device:
+             attr_vals.append(AttrVal('UPDATE', val))
+ 
+         if cell_parms['OUTMODE'] == 'ODDRX8' or cell_parms['OUTMODE'] == 'DDRENABLE16':
+-            attr_vals.append(AttrVal('LSROMUX_0', '0'))
++            attr_vals.append(AttrVal('LSROMUX_0', 0))
+         elif cell_parms['OUTMODE'] != 'ODDRX1' or bel.cell.typ == 'ODDRC':
+-            attr_vals.append(AttrVal('LSROMUX_0', '1'))
++            # By value id, not by name.  `get_iologic_attr_val` resolves a str
++            # through `iologic_attrvals`, where '1' is the code 2, while this
++            # device's IOLOGIC table keys `LSROMUX_0` on the value 1 -- so
++            # passing the string looked up a pair with no row and the fuse was
++            # dropped without a word.  An int skips the name table.  MEASURED:
++            # a working vendor bitstream carries `LSROMUX_0 1` on its
++            # serialisers and this packer wrote nothing.
++            attr_vals.append(AttrVal('LSROMUX_0', 1))
+         else:
+-            attr_vals.append(AttrVal('LSROMUX_0', '0'))
++            attr_vals.append(AttrVal('LSROMUX_0', 0))
+ 
+         if cell_parms['OUTMODE'] == 'DDRENABLE16':
+             attr_vals.append(AttrVal('OUTMODE', 'DDRENABLE'))

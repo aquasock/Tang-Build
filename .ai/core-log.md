@@ -725,3 +725,33 @@ Complete the packer's IOLOGIC attribute coverage for this device, which the guar
 - User Test: N/A
 
 ---
+
+## 25 COMMIT Unreleased 2026-10-09T07:57:44-07:00
+
+#### Coming From:
+
+Unreleased 97c3aa7
+
+#### Purpose:
+
+Check whether the IOLOGIC rows entry 24 said were missing really are, and fix what the answer turns out to be.
+
+#### Outcome:
+
+The rows are not missing, and the defect is a name-versus-id confusion in the packer. Probing the device's own table shows every attribute entry 24 proposed to populate already present, with fuse rows: `LSROMUX_0` id 21 on value 1, `LSRIMUX_0` id 20 on value 1, `HWL` id 117 on value 107, `FCLKSEL0` id 79 on 79, 80, 82 and 83, `FCLKSEL1` id 85 on 1, 79, 80 and 81, `FCLKSEL2` id 86 on 2, 82, 86 and 114, and `FCLKSEL3` id 129 on 79 and 86. So the plan entry 24 wrote was wrong, and the lesson is the one this project keeps relearning: check which structure holds a datum before concluding it is absent. What is actually wrong is that the packer passes `AttrVal('LSROMUX_0', '1')`, and `get_iologic_attr_val` resolves any string through `iologic_attrvals`, where `'1'` is the code 2 while this device's table keys that attribute on the value 1 -- so the pair looked up had no row and the fuse vanished in `add_attr_val`'s silent `if attrval:`. Passing the int skips the name table. That is the branch our OSER10s take, since their `OUTMODE` is not `ODDRX1`, which is exactly why a working vendor bitstream carries `LSROMUX_0 1` on its serialisers and this packer wrote nothing. The packer's three `LSROMUX_0` sites were changed to pass value ids, and the 0002 patch regenerated to cover both this and entry 24's guard -- the guard is kept, because its refusal of the lane-1 case is a genuine one and the `LSROMUX_0` refusal it also produced was the caller bug now fixed. Verified by repacking the `HCLK_OUT2` variant, which the guard permits: our serialisers now decode as `CLKOMUX 61`, `FCLKSEL1 81`, `FCLKSEL2 114`, `LSROMUX_0 1`, `OUTMODE 16` and `WRFCLKSEL 102`, against the vendor's ten -- so four attributes remain: `FCLKSEL0`, `FCLKSEL3`, `HWL` and `LSRIMUX_0`. The last of those corrects entry 11, which removed `LSRIMUX_0` from output cells on the reasoning that the vendor does not spend that fuse; the working vendor bitstream carries `LSRIMUX_0 1` on its serialisers and on all 314 ordinary IOLOGICs as well, so that reasoning was wrong or was drawn from the tree's other vendor build, and entry 11's change should be revisited rather than trusted. What is established is the lookup defect, that the table rows exist, and that one attribute now reaches the bitstream. What is not established is whether the four still missing matter for the display, which repacking and comparing would settle rather than assuming. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 25 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Revisit entry 11's `LSRIMUX_0` removal, which this cycle's evidence contradicts, and find the other three the same way: `FCLKSEL0`, `FCLKSEL3` and `HWL` have fuse rows in the device's table, so if the packer is not writing them the reason is a caller that does not emit them at all rather than a value that cannot resolve, and that is a different and smaller question than the one entry 24 posed. Then settle whether any of the four matters by repacking and comparing behaviour rather than attribute lists, since matching the vendor's list is not the same as matching its behaviour. The lane remains the substantive question: `FCLKSEL1` carries `HCLK1` but `FCLKSEL2` does not carry `HCLK1_`, so an odd lane half-encodes, and that is why the guard refuses it; whether nextpnr should be constrained to the lanes the device can select is still open and is the last thing between here and a display. The desktop core needs no change, and nothing in this cycle touched the board.
+
+#### Files Modified:
+
+- patches/0002-iologic-encodable-fuses.patch
+
+#### Status:
+
+- Build: PASS
+- Deployment: N/A
+- User Test: N/A
+
+---
