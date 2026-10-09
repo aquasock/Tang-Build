@@ -1,0 +1,187 @@
+# The open core drives the display — over VGA
+
+An FPGA bitstream built entirely with the open toolchain drives the desktop
+core's PmodVGA output.  The TinyDesk console appears on a 1280x720 raster and
+holds, the user read the session's own output on the monitor and photographed it.
+
+This matters less as "the display works" than as what it separates.  The display
+has two halves on this core `[fpga/desktop/README.md]`:
+
+- **VGA** — RGB is the top four bits of each compositor channel and blanking and
+  sync are *registered once, matching the compositor's RGB register*.  That is
+  the 74.25 MHz `hclk` pixel domain, and plain I/O pins.
+- **HDMI** — the same raster, serialised.  That additionally needs the three
+  OSER10 serialisers and the 371.25 MHz `hclk5` bit clock that feeds them.
+
+Our build drives the first half and not the second.  That is the whole of it.
+
+## The declaration that reaches VGA
+
+A core with PMOD sockets drives only what `/tang.ini` says is seated, and
+`tangload` sends the declaration after every load.  The core's own README names
+the tested seating:
+
+> *"J1 on PMOD1 (nearest HDMI), J2 on PMOD0, face up"*
+
+```ini
+[tang]
+pmod0 = vga_j2
+pmod0_flip = no
+pmod1 = vga_j1
+pmod1_flip = no
+```
+
+This produces `0xc0 = 0x0230`.  In `desktop_pmod.sv` the personality nibbles are
+slot 0 = `active_word[7:4]` and slot 1 = `active_word[11:8]`, with `1` = OLEDrgb,
+`2` = J1 and `3` = J2, so `0x0230` is J2 on PMOD0 and J1 on PMOD1.  The first
+attempt in this cycle used the opposite order, `pmod0 = vga_j1` /
+`pmod1 = vga_j2`, word `0x0320`.  The monitor locked onto it, then reported
+
+```
+OUT OF FREQUENCY RANGE H:002kHz V250.0Hz
+```
+
+dropped, and retried, repeatedly.  Swapping the halves declared the module the
+other way round, so the core drove each socket with the other half's personality
+— video on the sync pins and sync on the video pins.  The declaration has to
+name what is physically seated; either order is supported as long as it does.
+
+## What was loaded, and what the board said
+
+The artifact is the open-toolchain desktop core already recorded in the log:
+
+```
+file        /cores/console138k/desktop-open.bin   4,463,286 bytes
+repo copy   evidence/desktop-open.bin
+            sha256 fadd00bab669a4a1c3a5d2e9029fb48823cff50bc8adf38d032f4ff6caab069d
+```
+
+The card-side copy is identified by size and by that recorded provenance, not by
+hashing on the board: the TinyDesk shell carries no hash tool.  The vendor's own
+Gowin-built core was preserved first as `/cores/console138k/desktop-vendor.bin`,
+4,463,306 bytes, and the two differ in the first thing you would check, size.
+
+```
+tangload /cores/console138k/desktop.bin
+  Writing 4463286 bytes...   Erase: OK   Load SRAM   Usercode=0x00000000,
+  status=0x00026230          tangload: core loaded
+  tang.ini: sockets declared (0xc0 = 0x0230)
+
+fpga       core 84 answering on UART1 at 2000000 baud
+tangini    core 0x54 (ABI 1.1) has 0xc0 = 0x0230, as declared
+osd desk   on, 135419 cells in 2747 rows sent, 0 refused
+```
+
+`0 refused` is the load-bearing number: the core accepted every cell of the
+compositor layer the host pushed at it, so the failure was never in the layer or
+the link.  The user then read the console — including a marker naming this build
+— off the VGA monitor and photographed it.
+
+The vendor control was run first, on the same card, monitor, cable, seating and
+declaration: it produced a synced raster and the console.  Only the bitstream
+changed between the two.
+
+## The sweeps that came before
+
+Two offline searches were run this cycle to try to give `hclk5` its dedicated
+route, and both are refuted by measurement rather than argument.  Neither is
+worth re-walking.
+
+**Placement seeds.**  Six seeds (`7 11 13 17 23 29`) in parallel, one work
+directory each, counting `Failed to route net 'hclk5'`:
+
+```
+seed-7    943 clk, 1 clk27, 3 hclk5     finished
+seed-11   943 clk, 1 clk27, 4 hclk5     finished
+seed-13   943 clk, 1 clk27, 3 hclk5     finished
+seed-17   943 clk, 1 clk27, 4 hclk5     finished
+seed-23   run died                      ERROR: Net hclk5 has no route to the FCLK of
+                                        u_hdmi.hdmi.serializer.gwSer0 (sink wire X181Y102/FCLKA)
+seed-29   run died                      same
+```
+
+Never zero.  The `clk` failures are the ~21.5 MHz NES clock and are harmless —
+the keylink answers steadily for as long as it is watched — and `clk27` is one
+route.  Only `hclk5` matters here and no seed removes it.
+
+**The divider's bel.**  The other knob that reaches the vendor's configuration
+rather than just its seed: our build places `div5` on `CLKDIV_3`, the vendor
+places it on `CLKDIV_0` on the same tile with the same divisor.  Across the eight
+runs that finished, the placer put it on **all three** of `X181Y81/CLKDIV_0`,
+`X181Y81/CLKDIV_2` and `X181Y81/CLKDIV_3` — including the vendor's own
+`CLKDIV_0` — and every one of them still failed `hclk5` 3 or 4 times.  The bel is
+not the variable:
+
+```
+seed-17  X181Y81/CLKDIV_0    (the vendor's bel)   4 hclk5 failures
+seed-11  X181Y81/CLKDIV_2                         4 hclk5 failures
+seed-7   X181Y81/CLKDIV_3                         3 hclk5 failures
+seed-13  X181Y81/CLKDIV_3                         3 hclk5 failures
+```
+
+Pinning it is not even possible: `INS_LOC "div5" CLKDIV_0` and
+`INS_LOC "div5" CLKDIV_2` are rejected by every run with
+
+```
+ERROR: Unknown placement macro CLKDIV_0 in INS_LOC for cell div5
+```
+
+`INS_LOC` takes placement *macros* and the divider has none — only the PLLs do.
+So the bel cannot be forced, and the control shows it would not have helped.
+
+## What the routing numbers say
+
+Read against the VGA/HDMI split, the sweep counts are not just negative results:
+
+- `hclk` — 74.25 MHz, the pixel clock **VGA is registered on** — produced **no**
+  dedicated-routing failure in any run.
+- `hclk5` — 371.25 MHz, the bit clock **only the TMDS serialisers** need —
+  produced 3 or 4 in every run.
+
+The clock the working half needs routes on the dedicated network; the clock the
+broken half needs does not.  That is entry 36's receiver measurement and entry
+37's chipdb finding arriving from the other end: `HCLK_MUX_GAMMA30`, the network
+input that would feed the divider, has no source modelled in apicula, so
+nextpnr cannot route into it and falls back to fabric at 371 MHz — jitter — and a
+receiver locks and then falls out.  Nothing here contradicts that; this closes
+the loop from the display side.
+
+It also further weakens entry 5's second suspect.  The packer's option preamble
+was carried as the first thing to blame if TinyTang ever behaved oddly around
+this core.  This bitstream carries that same difference and does not behave
+oddly: it configures, runs, answers on UART1, takes the socket word, accepts
+every layer cell, and drives a complete display.
+
+## What this does and does not establish
+
+**Established.**  In an open-built bitstream, the system clock path, the
+compositor, the register file, the raster generator and the 74.25 MHz pixel
+domain all work on silicon, and the whole chain from FPGA pins to a monitor is
+proven end to end.  The desktop core now has a display observable that does not
+depend on the broken path, which it did not have before.
+
+**Not established.**  HDMI is not fixed and nothing here changes that.  `hclk5`
+still falls back to fabric; the chipdb gap named in entry 37 is still the target.
+What is new is that the defect is now bounded tightly to the serialiser half
+rather than being somewhere in "the display", and the offline acceptance test
+for a fix remains the same: zero `Failed to route net 'hclk5'`.
+
+The desktop patch consolidation recorded in `evidence/desktop-display-cycle.txt`
+section 7 remains deferred at the user's direction.
+
+## Gotchas
+
+**Driving the board's console.**  The TinyDesk shell is on `/dev/ttyACM0` when
+the board is in two-wire mode.  Driving it with hand-rolled `termios` produced a
+console feedback storm here — the shell echoing fragments of its own
+ANSI-coloured prompt back into its own stdin as commands, `tdsh: command not
+found: ...root@tinytang...` — while
+`pyserial` at 115200 on the same port is clean.  The observation is recorded
+rather than the cause diagnosed; the practical rule is to use `pyserial`.
+Reading the port passively returns zero bytes when the console is idle, so an
+idle board and a wedged board look different.
+
+**Rollback.**  The vendor core is on the card as
+`/cores/console138k/desktop-vendor.bin`; putting it back is
+`cp` over `/cores/console138k/desktop.bin` then `tangload`.  `/tang.ini` has
+`/tang.ini.oled` (the pre-cycle file) and `/tang.ini.vga` beside it.

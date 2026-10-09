@@ -81,9 +81,15 @@ EOF
 }
 echo "nextpnr: $nextpnr"
 
-cst=$tree/src/desktop/desktop.cst
+# The constraints, overridable so a sweep can try a variant without editing the
+# tree.  `PNR_CST` lets a caller supply a copy with, say, the CLKDIV pinned to a
+# different bel.
+cst=${PNR_CST:-$tree/src/desktop/desktop.cst}
 sdc=$tree/src/desktop/desktop.sdc
-work=$tree/.open-pnr
+# Everything writable lives under here, so a caller can give each run its own
+# directory and run several at once.  Without this, parallel seeds would
+# overwrite each other's routed netlist and log.
+work=${PNR_WORK:-$tree/.open-pnr}
 mkdir -p "$work"
 [[ -f $cst ]] || { echo "no constraints at $cst" >&2; exit 2; }
 
@@ -180,6 +186,20 @@ yosys -q -s "$work/drop.ys" > "$work/drop.log" 2>&1 || {
 # ------------------------------------------------------------------ nextpnr --
 echo
 echo "placing and routing"
+
+# Placement is the thing that decides whether the bit clock's route can be
+# dedicated, and a design this size gives different outcomes on different runs.
+# Both knobs are passthroughs so a sweep can be run without editing this script:
+#
+#   NEXTPNR_SEED=7        fixed seed
+#   NEXTPNR_PLACER=heap   sa or heap
+#
+# The synthesised netlist does not depend on either, so a sweep over seeds only
+# has to re-place and re-route.
+pnr_extra=()
+[[ -n ${NEXTPNR_SEED:-} ]]   && pnr_extra+=(--seed "$NEXTPNR_SEED")
+[[ -n ${NEXTPNR_PLACER:-} ]] && pnr_extra+=(--placer "$NEXTPNR_PLACER")
+
 set +e
 "$nextpnr" \
     --json "$work/pnr-input.json" \
@@ -188,7 +208,8 @@ set +e
     --vopt cst="$cst" \
     --sdc "$work/desktop.sdc" \
     --timing-allow-fail \
-    --report "$work/report.json" 2>&1 | tee "$work/nextpnr.log"
+    --report "$work/report.json" \
+    "${pnr_extra[@]}" 2>&1 | tee "$work/nextpnr.log"
 rc=${PIPESTATUS[0]}
 set -e
 
