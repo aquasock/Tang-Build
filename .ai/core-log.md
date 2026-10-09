@@ -484,3 +484,33 @@ Scope the missing clock route in nextpnr, which is still the one defect keeping 
 - User Test: N/A
 
 ---
+
+## 17 COMMIT Unreleased 2026-10-09T05:44:03-07:00
+
+#### Coming From:
+
+Unreleased 9376ea6
+
+#### Purpose:
+
+Scope the missing clock route from nextpnr's own routing state rather than by further inference from the clock tables, and find out where the display clock is lost.
+
+#### Outcome:
+
+The route does not fail, which is not what the previous three entries assumed; it succeeds and is then not representable in the bitstream. nextpnr exposes its state after routing through a post-route Python hook, and himbaechel's binding is not the one its docs describe -- `ctx.nets` is an `IdNetMap` with no `keys()` -- but a net resolves to `driver`, `users` and `wires` and a `PortRef` to `cell` and `port`, so `hclk5` can be read directly. It has four users, `div5.HCLKIN` at `X181Y81/CLKDIV_3` and all three serialisers' `FCLK` at `X181Y102/IOLOGICAO`, `X181Y100/IOLOGICAO` and `X181Y57/IOLOGICAO`, driven from `pll_hdmi.PLL_inst.CLKOUT0` at `X1Y81/PLL`, and its 44 wires include `X181Y102/FCLKA`, `X181Y100/FCLKA` and `X181Y57/FCLKA`. All three serialisers are reached. What fails is the three dedicated-routing warnings for this net, after which nextpnr falls back and carries it through general fabric -- and where it goes is the finding: among the 44 wires are `X0Y0/HCLK31` and `X0Y0/HCLK11` alongside `SPINE16`, `SPINE25`, `GT00` and `GB10`. `X0Y0` is not one of the 171 tiles in `hclk_pips`, so it has no HCLK switch matrix and no HCLK pip, yet the HCLK wire names exist there because `create_global_nodes` walks every node and calls `create_reuse_wire` at each of its positions. Read against the unpack of section 8, where this bitstream has no `FCLK` at any of the three serialisers and the vendor's has one at all three, the sequence is that the packer resolves the serialiser's clock source from the HCLK structures and does not recognise a route carried by general fabric through an HCLK wire name at a non-HCLK tile, so it emits no `FCLK`. What is established from nextpnr's own state is that the net is routed to all four users and that all three `FCLKA` wires are in it; what is established from the unpack is the absent `FCLK` and the vendor's present one; what is a hypothesis, and is labelled as one in the evidence, is that the packer drops a `FCLK` driven over general fabric or over an HCLK wire outside `hclk_pips`. Two related readings are recorded beside it: `clk27` has the same shape, one user and its single sink among the warnings, so it is routed and presumably unpacked the same way; and `clk`, the 21.49 MHz NES clock, reports 2138 users and 2138 wires, one wire per sink, so it is routed as a star over general fabric rather than through a clock spine, which is why the rest of the core works while the 371.25 MHz clock does not. The recovered binary from entry 16 is the instrument, and it reproduced the baseline exactly -- 3 `hclk5` failures of 947 -- so the reading is of the same run the earlier entries describe. `evidence/desktop-clock-routing.txt` now carries the resolved driver, users and wire list, the `X0Y0` observation, and the established-versus-hypothesis split. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 17 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Test the hypothesis directly before writing any fix against it, because the fix differs depending on which half of the disjunction is true: pack the routed JSON from this run with `gowin_pack` and unpack the result, which is minutes and needs no board, so that the `FCLK` mux is either present -- meaning the loss is elsewhere in the pack and the read above is wrong -- or absent -- meaning the packer drops a general-fabric `FCLK` and the fix belongs in `get_out_iologic_attrs` or in how nextpnr is permitted to fall back. If it is the packer, the narrow fix is to make the FCLK source resolvable for a general-fabric route, or to make nextpnr refuse the fallback for a net whose sink is an IOLOGIC `FCLK` rather than routing it into a state the packer cannot encode; if it is the router, the fix is the `X0Y0` reuse-wire availability, which allows an HCLK wire name to be routed at a tile with no HCLK resource. The desktop core still needs no change and should not be rebuilt until one of those is chosen. Nothing in this cycle touched the board.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

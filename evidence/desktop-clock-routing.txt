@@ -272,3 +272,62 @@ both builds agree, and look for what is ABSENT rather than what differs.  The
 pad configuration passed that comparison and so did the TMDS serialiser
 attributes, which is exactly why the remaining gap was one layer up, in the
 routing rather than in the configuration.
+
+==================================================================
+10. The route does not fail -- it is not packable
+==================================================================
+
+nextpnr exposes its own state after routing through a post-route Python hook
+(`--post-route`).  himbaechel's binding is not the one the docs describe
+(`ctx.nets` is an `IdNetMap` with no `keys()`), but it resolves: a net has
+`driver`, `users` and `wires`, and a `PortRef` has `cell` and `port`.  Read
+there, the picture is not the one sections 2 and 8 assumed.
+
+    === net hclk5
+      driver: pll_hdmi.PLL_inst.CLKOUT0   bel=X1Y81/PLL
+      users: 4
+          div5.HCLKIN                         bel=X181Y81/CLKDIV_3
+          u_hdmi.hdmi.serializer.gwSer0.FCLK  bel=X181Y102/IOLOGICAO
+          u_hdmi.hdmi.serializer.gwSer1.FCLK  bel=X181Y100/IOLOGICAO
+          u_hdmi.hdmi.serializer.gwSer2.FCLK  bel=X181Y57/IOLOGICAO
+      wires: 44, including X181Y102/FCLKA, X181Y100/FCLKA and X181Y57/FCLKA
+
+ALL THREE SERIALISERS' `FCLKA` WIRES ARE IN THE NET.  The connection is
+complete; what fails is the 3 warnings about dedicated routing, and nextpnr
+then falls back and carries the net through general fabric instead.
+
+Where it goes is the point.  Among the 44 wires are:
+
+    X0Y0/HCLK31   X0Y0/HCLK11
+    X181Y27/HCLK_MUX_BETA11   X181Y81/HCLK_MUX_BETA31
+    X88Y54/SPINE16  X145Y64/SPINE25  X176Y77/GB10  X177Y73/GT00
+    X176Y81/GB10  X179Y81/EW10 ...
+
+`X0Y0` is NOT one of the 171 tiles in `hclk_pips`, so it has no HCLK switch
+matrix and no HCLK pip.  The HCLK wire names nevertheless exist there, because
+nextpnr creates them from `db.nodes` -- `create_global_nodes` walks every node
+and calls `create_reuse_wire` at each of its positions -- so a wire whose name
+is an HCLK resource is available at tiles where that resource is not.
+
+Read against the bitstream: `gowin_pack` resolves the serialiser's clock
+source from the HCLK structures, and a route carried by general fabric through
+an HCLK wire name at a non-HCLK tile is not one it recognises, so no `FCLK`
+mux is emitted.  Section 8's unpack showed exactly that -- no `FCLK` at any of
+the three serialisers, where the vendor's build has one at all three.
+
+ESTABLISHED, from nextpnr's own state: the net is routed to all four users,
+all three `FCLKA` wires are in it, and 3 of the 947 dedicated-routing warnings
+are this net's.  ESTABLISHED, from the unpack: the bitstream has no `FCLK` and
+the vendor's does.  HYPOTHESIS, and labelled as one: that the packer drops a
+`FCLK` driven over general fabric or over an HCLK wire at a tile outside
+`hclk_pips`.  It is testable directly -- pack this routed JSON and unpack the
+result, which is minutes and no board -- and it should be tested before any
+fix is written, because the fix differs depending on which half of that
+disjunction is true.
+
+Two details worth keeping.  `clk27` shows the same shape: 1 user, 10 wires,
+its single sink among the warnings -- routed, and presumably unpacked the same
+way.  And `clk`, the 21.49 MHz NES clock, reports 2138 users and 2138 wires,
+one wire per sink: it is routed as a star over general fabric rather than
+through a clock spine, which is why the whole design works while the 371.25
+MHz one does not.
