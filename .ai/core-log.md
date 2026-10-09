@@ -635,3 +635,33 @@ None.
 - User Test: N/A
 
 ---
+
+## 22 COMMIT Unreleased 2026-10-09T06:58:44-07:00
+
+#### Coming From:
+
+Unreleased ff0d794
+
+#### Purpose:
+
+Compare the OSER10 cells' internal configuration between this build's bitstream and one that drives a working display, which entry 21 named as the last place the two differ in kind.
+
+#### Outcome:
+
+The cause is found, and it supersedes entry 21 as well as the three candidates before it. The comparison wrapped the unpacker's `parse_attrvals` and logged every IOLOGIC call, and both bitstreams decode 320 IOLOGIC attribute sets. In the working bitstream exactly three of them -- the three OSER10s -- carry `CLKOMUX 61`, `FCLKSEL0 79`, `FCLKSEL1 81`, `FCLKSEL2 114`, `FCLKSEL3 86`, `HWL 107`, `LSRIMUX_0 1`, `LSROMUX_0 1`, `OUTMODE 16` and `WRFCLKSEL 102`; in ours the same three carry only `CLKOMUX 61`, `OUTMODE 16` and `WRFCLKSEL 102`. Our serialisers are missing `FCLKSEL0` through `FCLKSEL3`, the fast-clock lane selection, and `HWL`, `LSRIMUX_0` and `LSROMUX_0` with them. The mechanism was read in the packer rather than guessed: `get_out_iologic_attrs` adds `fclk_select_attrs(bel, 'FCLKSEL1', 'FCLKSEL2')`, and that function begins `lane = self._fclk_lane.get(bel.fclk); if lane is None: return []`. `_fclk_lane` maps `SPINE10`..`SPINE13` to lanes 0..3, so when the FCLK is not carried on a spine -- which is what the router's fallback to general fabric leaves it -- `bel.fclk` is `None`, nothing is selected, and no lane selection reaches the bitstream. The serialiser's clock input is left unselected, so it has no bit clock. The whole chain is then read rather than assumed: nextpnr cannot route `hclk5` on dedicated routing to any of the three serialisers and falls back to fabric, which entries 2 and 10 recorded as 3 of the 947 warnings; `FCLK` is therefore not on a spine and `bel.fclk` is `None` at pack time; `fclk_select_attrs` returns `[]`; the clock mux is unselected; and no TMDS leaves the part, which is the dark display and the sleeping monitor. The vendor's build routes over the dedicated network, so its `bel.fclk` is set and all four `FCLKSEL`s are written, which is why it works. Two consequences for the record. Entry 21 retracted the lane-3 entry as a cause on the reasoning that clock-smoke carries the same fabric entry and is measured working, and that reasoning is wrong and is superseded here: clock-smoke takes its clock at a CLKDIV, which needs no IOLOGIC lane selection, so it never exercised the thing that turns out to be missing, and the lane entry is implicated after all -- not because fabric is too slow, which entry 21 was right to doubt, but because the packer cannot express a fabric-routed FCLK at all. What is established is that ours lacks `FCLKSEL0` through `FCLKSEL3` where the working bitstream has them and that `fclk_select_attrs` writes nothing when `bel.fclk` is `None`; what is inferred from those two, though tightly, is that an unselected clock mux is why the serialiser is silent, and the link that would settle it -- `bel.fclk` being `None` in this run -- is checkable with the post-route hook that produced entry 17's dump and has not been checked. The fix is not in the core, the design, the packer's tables or the database: it is that nextpnr must route the FCLK on the dedicated HCLK network, which is what the recovered binary and the regenerated database exist to test. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 22 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Check the one inferred link before writing any fix: run the post-route hook from entry 17 over the same routed design and print `ctx.cells[...].ports['FCLK'].net.name` for the three OSER10s and the bel's fclk attribute, to confirm that `bel.fclk` is `None` when the net is fabric-routed -- which would make the chain airtight rather than tightly inferred -- and to record which IOLOGIC bel and lane it would have had. Then the fix belongs in nextpnr: make the FCLK route on the dedicated HCLK network, or refuse to fall back for a net whose sink is an IOLOGIC FCLK rather than routing it into a state the packer cannot express, so that the failure is loud instead of silent. A packer-side alternative, teaching `fclk_select_attrs` to express a fabric source, is possible in principle but pointless at 371.25 MHz. The desktop core still needs no change, and the two earlier findings that this supersedes -- the FCLK connection being absent (14) and the lane entry not being the cause (21) -- should not be re-walked in their original form.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

@@ -557,3 +557,79 @@ between our bitstream and a working one, and that comparison has not been made.
 Refuted and not to be re-walked: a missing `FCLK` (11), an unjoined HCLK node
 (13), a dropped general-fabric `FCLK` (13), and -- retracted here -- the fabric
 lane entry as the cause (14).
+
+Section 14's retraction of the lane entry is itself wrong and is superseded by
+section 16.  The reasoning there was that clock-smoke carries the same fabric
+lane entry and is measured working, so the entry cannot be the cause -- but
+clock-smoke's consumer is a CLKDIV, which needs no IOLOGIC lane selection at
+all, so it never exercised the thing that turns out to be missing.
+
+==================================================================
+16. The cause: the serialisers have no FCLK lane selection
+==================================================================
+
+The OSER10 cells' internal configuration was compared by wrapping the
+unpacker's `parse_attrvals` and logging every IOLOGIC call
+(`/home/vash/tools/pnr-test/iol-state.py`).  The decoder emits 320 IOLOGIC
+attribute sets for each bitstream.  In the WORKING bitstream, exactly three of
+them -- the three OSER10s -- carry:
+
+    CLKOMUX 61   FCLKSEL0 79   FCLKSEL1 81   FCLKSEL2 114   FCLKSEL3 86
+    HWL 107      LSRIMUX_0 1   LSROMUX_0 1   OUTMODE 16      WRFCLKSEL 102
+
+In OURS, the same three carry:
+
+    CLKOMUX 61   OUTMODE 16    WRFCLKSEL 102
+
+OUR SERIALISERS ARE MISSING `FCLKSEL0` THROUGH `FCLKSEL3` -- the fast-clock
+lane selection -- and also `HWL`, `LSRIMUX_0` and `LSROMUX_0`.
+
+The mechanism is in the packer, and it was read there rather than guessed:
+
+    def get_out_iologic_attrs(self, bel):
+        attrs = (super().get_out_iologic_attrs(bel)
+                 + self.fclk_select_attrs(bel, 'FCLKSEL1', 'FCLKSEL2')
+                 + self.oser16_aux_attrs(bel))
+        return [av for av in attrs if av.attr != 'LSRIMUX_0']
+
+    def fclk_select_attrs(self, bel, sel, sel_):
+        lane = self._fclk_lane.get(bel.fclk)
+        if lane is None:
+            return []                 # nothing selected, nothing written
+        ...
+
+`_fclk_lane` maps `SPINE10`..`SPINE13` to lanes 0..3.  When the FCLK is not
+carried on a spine -- which is what happens when the router falls back to
+general fabric, as it does here for all three serialisers -- `bel.fclk` is
+`None`, `fclk_select_attrs` returns `[]`, and no lane selection reaches the
+bitstream.  The serialiser's clock input is left unselected.
+
+THE CHAIN, each link read rather than assumed:
+
+  1. nextpnr cannot route `hclk5` on dedicated routing to any of the three
+     serialisers -- 3 of the 947 warnings -- and falls back to fabric  (2, 10)
+  2. `FCLK` is then not on a spine, so `bel.fclk` is `None` at pack time
+  3. `fclk_select_attrs` returns `[]`, so no `FCLKSEL0..3` is written  (16)
+  4. the serialiser's clock mux is unselected, so it has no bit clock
+  5. no TMDS leaves the part; the sink never locks; the monitor sleeps
+
+The vendor's build routes over the dedicated network, so `bel.fclk` is set and
+all four `FCLKSEL`s are written, which is why it works.
+
+WHY THE OTHER TWO DESIGNS FIT.  clock-smoke takes its clock at a CLKDIV, which
+needs no IOLOGIC lane selection, so the same fabric entry is harmless there and
+it works -- which is also why section 14's inference from it was wrong.  The
+desktop core's three OSER10s need the selection and do not get it.
+
+ESTABLISHED: ours lacks `FCLKSEL0..3` where the working bitstream has them, and
+`fclk_select_attrs` writes nothing when `bel.fclk` is `None`.  INFERRED from
+those two, but tightly: that an unselected clock mux is why the serialiser is
+silent.  The link that would make it airtight, `bel.fclk` being `None` in this
+run, is checkable with the same post-route hook that produced section 10 and
+has not been checked yet.
+
+THE FIX IS NOT IN THE CORE.  It is that nextpnr must route the FCLK on the
+dedicated HCLK network -- entry 16's recovered binary plus the regenerated
+database are the instrument -- or that the packer must be able to express a
+fabric-routed FCLK, which it cannot at 371.25 MHz.  The router side is the
+real one.
