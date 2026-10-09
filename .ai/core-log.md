@@ -181,3 +181,34 @@ Settle the counter indexing before anything else, because it is one small change
 - User Test: FAIL
 
 ---
+
+## 7 COMMIT Unreleased 2026-10-08T22:05:01-07:00
+
+#### Coming From:
+
+Unreleased 6a8fd4f
+
+#### Purpose:
+
+Settle the factor-of-two ambiguity entry 6 left in the `clk27` and `hclk` rates by making the readout measure cycles rather than report bits.
+
+#### Outcome:
+
+Entry 6 left the rates of `clk27` and `hclk` ambiguous by a factor of two, and this cycle was to settle them by measuring cycles instead of reading bits, which it did. The readout no longer reports a counter bit at all: it counts the edges of bit 12 of `cnt_27` and `cnt_hclk`, each crossed into the `sys_clk` domain as a single bit and counted there, so what is delivered is a count of 8192-cycle units and the reader never has to know which bit was read. That distinction is what entry 6 could not make and the answer needed, because a flop count does not reveal a bit's position. Two faults of this cycle's own making were found and fixed before the result could be trusted. The decoder divided by 2^12 where bit 12 toggles every 2^13 cycles, which halved every frequency and made this cycle's first reading look like the designed values; it was caught against a hand calculation on a single line, where `c27` advances 0x1148 = 4424 per line and 4424 x 8192 / 0.6737 s = 53.8 MHz. And the readout had been transmitting about 9300 bytes per second into a link that carries only about 100 to 170, which is why entry 6's last capture arrived degraded at 307 B/s and the next arrived as nothing at all; the one-wire path forwards the FPGA UART through the BL616, and swamping that bridge presents as silence rather than as errors. A power cycle cleared it, and what proved the link rather than the design was `evidence/uart-message-compressed.fs`, the Apicula example that produced the 17 KB capture, silent before the cycle and talking after it. The cadence was then slowed to 2^25 `sys_clk` cycles, 671.08864 ms, to sit inside the channel. What the board reports is that both PLLs run at exactly twice their configured rate. `clk27` is 53.7911 MHz against a configured 27.0000 and `hclk` 147.9306 MHz against 74.2500; the ratios to `sys_clk` are 1.0800 and 2.9700 where the design says 0.5400 and 1.4850, exactly double to about three parts in a thousand, and both `pll_27` and `pll_hdmi` report LOCK on all 105 lines. Two independent references agree on the scale, `sys_clk` being 49.81 MHz from the line cadence and 49.997 MHz from the design's own UART baud, an agreement of 0.377 per cent. The counter indices are not inferred this time: `cnt_27` is 24 flops for a declared `[23:0]` register and `cnt_hclk` 25 for `[24:0]`, so no bit was dropped or shifted and bit 12 is bit 12 by construction. The consequence is that `hclk5` is 742.5 MHz rather than 371.25, and since the desktop core's own `pll_27` carries this configuration, a pixel clock of 148.5 MHz where the monitor expects 74.25 is a concrete candidate for the display failure that entry 5 could only narrow. The doubling is value-dependent rather than general: `pll_hdmi`, MDIV 55 and ODIV 4, behaves exactly as declared, so the fault sits at `pll_27`, MDIV 27 and ODIV 50, and the desktop core's `pll_nes` at MDIV 40 is left alone, which is why its keylink still answers and why that evidence never contradicted this. That narrows a claim entry 2 recorded: the four PLL attributes it compared are the charge-pump set, `FLDCOUNT`, `KVCO`, `A_ICP_SEL` and `A_LPF_RES_SEL`, and the dividers were never compared, which is the gap this walked through. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and `core-log.md` was, and validated this entry as number 7 of the active log with a conforming header, six sections in canonical order, prose in Outcome and Next Steps, and an allowed Status set. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Settle the divider question without the board, since the next step needs no hardware and the board is presently running `clock-smoke` in SRAM. Unpacking this project's desktop core and the vendor's `TinyTang/build/desktop/source/impl/pnr/desktop.fs` with the fork's `gowin_unpack` puts the three PLL instances side by side; comparing the divider parameters, `MDIV_SEL` and `ODIV0_SEL` above all, against the values the netlist asked for names the fault outright, and comparing them against each other says whether `gowin_pack` derives the dividers wrongly or writes them wrongly. This project's `.fs` is not committed, only its `.bin`, but the conversion is one to one so the text form reconstructs from it, as `evidence/clock-smoke-readout.txt` records for the reconstruction already made. The prediction to test is that `pll_27`'s dividers differ from the vendor's while `pll_hdmi`'s match, because that is the pattern the board measured; if they do differ the fix belongs in the fork's packer and the display follows from it, and if they match then the divider model is right and the error is in what the packer is handed. Nothing in this needs the board.
+
+#### Files Modified:
+
+- fpga/clock-smoke/clock_smoke.v
+- tools/decode-clock-smoke.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: FAIL
+
+---

@@ -3,39 +3,34 @@
 
     tools/decode-clock-smoke.py CAPTURE --seconds 25.0
 
-The design (`fpga/clock-smoke/clock_smoke.v`) sends one fixed 40-byte line:
+The design (`fpga/clock-smoke/clock_smoke.v`) sends one fixed 49-byte line:
 
-    clock-smoke s=A c=B h=C lock=DE n=XXXX\\r\\n
+    clock-smoke s=A lock=DE c27=XXXX hk=XXXX n=XXXX\\r\\n
 
-once every 2^18 `sys_clk` cycles, where A/B/C are cnt_sys[24], cnt_27[23] and
-cnt_hclk[24], D/E are the two PLL LOCK bits, and XXXX is a counter of lines
-sent, so the design states its own time base rather than leaving it inferred.
+once every 2^25 `sys_clk` cycles (671.08864 ms at 50 MHz).  `D`/`E` are the pll_27 and pll_hdmi LOCK
+bits and `XXXX` values are hex.  `n` counts lines sent, so the design states
+its own time base; `c27` and `hk` are COUNTS of bit-8 edges of `cnt_27` and
+`cnt_hclk`, and that is the whole reason this version exists.
 
-Three things are checked here, in order, and each one licenses the next:
+A counter bit n toggles once every 2^(n+1) cycles, so bit 12 toggles every 8192
+cycles and a count of its edges is a count of 8192-cycle units.  That means the
+readout yields
 
-1. Faithfulness.  `n=` must advance by exactly one per line.  A repeat is a
-   duplicated read; a jump is a dropped one.  Both are reported and the
-   capture is rejected as a measurement if they are common.
+    f = (cycles added per line) / (line period) = (delta x 256) / line period
 
-2. The line period.  `--seconds` is the wall-clock duration of the capture, so
-   the line period is (seconds / lines) with the line count taken from the
-   design's own counter, not from how much the host managed to read.  Host
-   buffering moves the endpoints by at most a line, not the rate.
+without the reader having to know which bit was read.  The two earlier versions
+of this readout reported bits, and a bit's position cannot be recovered from a
+flop count -- which is exactly how a real doubling of a PLL and a reporting
+error became indistinguishable.
 
-3. The cadence, which is the check that makes the rest absolute.  The line is
-   sent every 2^18 sys_clk cycles, so `s` -- cnt_sys[24], which toggles every
-   2^25 cycles -- must toggle every 2^25 / 2^18 = exactly 128 lines.  If it
-   measures 128 the cadence is confirmed, and then
+The line period comes from `n` and `--seconds`, and `sys_clk` is checked two
+independent ways, neither of which uses the counters under test:
 
-       f_sys = 2^18 / line_period
+  * from the cadence, f_sys = 2^25 / line_period; and
+  * from the UART, f_sys ~= 434 x baud, which is meaningful only while the
+    stream decodes, because the design's own baud is derived from sys_clk.
 
-   with no assumption about the crystal at all.  clk27 and hclk follow from
-   their own bit periods: c is bit 23 of a 24-bit counter, so it toggles every
-   2^24 cycles, and h is bit 24 of a 25-bit counter, every 2^25.
-
-If `s` does *not* measure 128 lines the cadence is not what the RTL says and
-this tool refuses to print absolute frequencies, because at that point the
-design and its own description disagree and neither can be trusted.
+If the two disagree the capture is not to be trusted about anything.
 
 SPDX-License-Identifier: MIT
 """
@@ -45,20 +40,25 @@ import re
 import sys
 from collections import Counter
 
-CAD_BITS = 18            # the line cadence, from the RTL
-TARGET_S_PERIOD = (1 << 7)   # 2^25 / 2^18 = 128 lines, the cadence check
-
-#: field -> (label, counter bit index; its toggle period is 2^(n+1) cycles)
-FIELDS = (("s", "sys_clk", 24), ("c", "clk27", 23), ("h", "hclk (CLKDIV output)", 24))
+CAD_BITS = 25        # the line cadence, from the RTL
+BAUD_DIV = 434       # sys_clk cycles per UART bit, from the RTL
+BIT = 12             # the counter bit whose edges are counted
 
 LINE_RE = re.compile(
-    rb"clock-smoke s=([01]) c=([01]) h=([01]) lock=([01])([01]) n=([0-9a-f]{4})\r\n")
+    rb"clock-smoke s=([01]) lock=([01])([01]) c27=([0-9a-f]{4})"
+    rb" hk=([0-9a-f]{4}) n=([0-9a-f]{4})\r\n")
 
 
-def periods(vals):
-    """interval in lines between successive transitions of a bit"""
-    edges = [i for i in range(1, len(vals)) if vals[i] != vals[i - 1]]
-    return [b - a for a, b in zip(edges, edges[1:])], len(edges)
+def unwrapped(values):
+    """successive differences, with the 16-bit wraps taken out"""
+    out, prev = [], values[0]
+    for v in values[1:]:
+        d = (v - prev) % 65536
+        while d > 32768:          # a wrap forward, not a big backward step
+            d -= 65536
+        out.append(d)
+        prev = v
+    return out
 
 
 def main():
@@ -68,87 +68,65 @@ def main():
     ap.add_argument("capture")
     ap.add_argument("--seconds", type=float, required=True,
                     help="wall-clock duration of the capture")
+    ap.add_argument("--baud", type=int, default=115200,
+                    help="baud the capture was taken at (default 115200)")
     args = ap.parse_args()
 
     raw = open(args.capture, "rb").read()
-    hits = [(m.start(), m.groups()) for m in LINE_RE.finditer(raw)]
+    hits = [m.groups() for m in LINE_RE.finditer(raw)]
     print("capture : %s" % args.capture)
     print("           %d bytes, %.3f s" % (len(raw), args.seconds))
-    if len(hits) < 20:
+    if len(hits) < 30:
         print("\nonly %d well-formed lines -- not enough to measure" % len(hits))
         return 1
 
-    counts = [int(h[5], 16) for _, h in hits]
+    counts = [int(h[5], 16) for h in hits]
     deltas = [(b - a) % 65536 for a, b in zip(counts, counts[1:])]
     d = Counter(deltas)
-    print("lines   : %d well-formed; bytes accounted for %d/%d"
-          % (len(hits), len(hits) * 40, len(raw)))
-    print("          n= deltas: %s" % dict(sorted(d.items())[:6]))
     good = d.get(1, 0)
+    print("lines   : %d well-formed" % len(hits))
+    print("          n= deltas: %s" % dict(sorted(d.items())[:5]))
     if good < 0.95 * len(deltas):
-        print("          capture is NOT faithful (not 95%% of steps are +1);"
-              " refusing to measure")
+        print("          capture is NOT faithful (fewer than 95%% of steps are +1)")
         return 1
-    # The span comes from the steps that are exactly +1.  Summing the raw
-    # deltas would fold in any single corrupt step as a five-thousand-line
-    # jump, which is silent nonsense; counting the good steps is not.
-    lines_span = good
     if good != len(deltas):
-        odd = {k: v for k, v in d.items() if k != 1}
-        print("          %d step(s) are not +1 and are excluded: %s"
-              % (len(deltas) - good, odd))
-    line_period = args.seconds / lines_span
-    print("          %d lines between the first and last counter reading" % lines_span)
-    print("          line period  %.6f ms  (%.2f lines/s)"
-          % (line_period * 1e3, 1.0 / line_period))
+        print("          %d step(s) not +1, excluded" % (len(deltas) - good))
 
-    locks = Counter((h[3].decode() + h[4].decode()) for _, h in hits)
+    lines = good
+    line_period = args.seconds / lines
+    f_cadence = (1 << CAD_BITS) / line_period
+    f_uart = BAUD_DIV * args.baud
+    print("          line period %.6f ms  (%.2f lines/s)" % (line_period * 1e3, 1 / line_period))
+
+    print("\nsys_clk, two independent checks:")
+    print("  cadence (2^%d / line period)      %9.4f MHz" % (CAD_BITS, f_cadence / 1e6))
+    print("  UART    (%d x %d baud)          %9.4f MHz" % (BAUD_DIV, args.baud, f_uart / 1e6))
+    skew = abs(f_cadence - f_uart) / f_uart
+    print("  agreement                         %9.3f %%" % (skew * 100))
+    if skew > 0.05:
+        print("  DISAGREE by more than 5%% -- one of the two references is not")
+        print("  what it is assumed to be; refusing to report clock rates")
+        return 1
+
+    locks = Counter(h[1].decode() + h[2].decode() for h in hits)
     print("\nPLL lock bits (pll_27, pll_hdmi): %s"
           % ", ".join("%s x%d" % (k, v) for k, v in locks.most_common()))
 
-    print("\nbit periods, in lines:")
-    measured = {}
-    for key, label, n in FIELDS:
-        vals = [int(h[{"s": 0, "c": 1, "h": 2}[key]]) for _, h in hits]
-        runs, edges = periods(vals)
-        if not runs:
-            print("  %-24s no transitions -- bit constant at %s all capture"
-                  % (label, vals[0]))
-            measured[key] = None
+    print("\nclocks, from counted bit-%d edges (8192 cycles each):" % BIT)
+    for name, idx, expect in (("clk27", 3, 27.00), ("hclk (CLKDIV output)", 4, 74.25)):
+        vals = [int(h[idx], 16) for h in hits]
+        steps = unwrapped(vals)
+        if max(abs(s) for s in steps) < 2:
+            print("  %-24s no edges -- clock not running" % name)
             continue
-        runs.sort()
-        med = runs[len(runs) // 2]
-        mean = sum(runs) / len(runs)
-        measured[key] = mean
-        print("  %-24s %d transitions, median %d, mean %.3f lines"
-              % (label, edges, med, mean))
-
-    s_period = measured.get("s")
-    print("\ncadence check: `s` should toggle every %d lines" % TARGET_S_PERIOD)
-    if s_period is None:
-        print("  `s` never toggled -- the 50 MHz input is not running")
-        return 1
-    err = 100.0 * (s_period - TARGET_S_PERIOD) / TARGET_S_PERIOD
-    print("  measured %.3f lines, error %+.3f%%" % (s_period, err))
-    if abs(err) > 2.0:
-        print("  cadence does NOT match the RTL -- absolute frequencies withheld")
-        return 1
-    print("  confirmed; the design's own cadence is 2^%d sys_clk cycles" % CAD_BITS)
-
-    print("\nmeasured frequencies (absolute, from the line period alone):")
-    f_sys = (1 << CAD_BITS) / line_period
-    print("  %-24s %9.4f MHz" % ("sys_clk", f_sys / 1e6))
-    for key, label, n in FIELDS:
-        if key == "s" or measured[key] is None:
-            continue
-        f = (1 << (n + 1)) / (measured[key] * line_period)
-        print("  %-24s %9.4f MHz   (= %d x sys_clk, %.6f)"
-              % (label, f / 1e6, 0, f / f_sys))
-    if measured.get("h"):
-        f_h = (1 << 25) / (measured["h"] * line_period)
-        print("\n  hclk5 = 5 x hclk = %.4f MHz" % (5 * f_h / 1e6))
-        print("  (hclk5 carries no flop -- a 371.25 MHz fabric path fails timing"
-              "\n   on this design -- so it is established through the CLKDIV.)")
+        per_line = sum(steps) / len(steps)
+        f = per_line * (1 << (BIT + 1)) / line_period
+        print("  %-24s %8.4f MHz  (%.2f bit-%d edges/line, %.4f x sys_clk)"
+              % (name, f / 1e6, per_line, BIT, f / f_cadence))
+        print("  %-24s   designed %8.4f MHz;  doubled would be %8.4f MHz"
+              % ("", expect, 2 * expect))
+    print("\n  hclk5 = 5 x hclk, and carries no flop of its own (a 371.25 MHz")
+    print("  fabric path fails timing here), so hclk is what establishes it.")
     return 0
 
 

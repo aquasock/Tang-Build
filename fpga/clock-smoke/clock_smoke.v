@@ -28,29 +28,33 @@
 //
 // The UART is clocked by `sys_clk` alone, so it keeps reporting even if every
 // PLL is dead -- which is exactly the case worth being able to see.  It sends
-// one fixed 40-byte line:
+// one fixed 49-byte line:
 //
-//   clock-smoke s=A c=B h=C lock=DE n=XXXX\r\n
+//   clock-smoke s=A lock=DE c27=XXXX hk=XXXX n=XXXX\r\n
 //
-//      s  cnt_sys[24]    ~1.49 Hz if the 50 MHz input is running
-//      c  cnt_27[23]     ~1.61 Hz if clk27 is running
-//      h  cnt_hclk[24]   ~2.21 Hz if hclk (the CLKDIV output) is running
-//      D  pll_27 LOCK
-//      E  pll_hdmi LOCK
-//      n  cnt_line[15:0] a counter of lines sent, so the design states its own
-//                        time base instead of leaving it to be inferred
+//      s     cnt_sys[24], a sanity bit for the 50 MHz input
+//      D E   pll_27 and pll_hdmi LOCK
+//      c27   count of clk27's bit-8 edges: clk27 = c27 x 256 / line period
+//      hk    the same for hclk, the CLKDIV output
+//      n     a counter of lines sent, so the design states its own time base
 //
-// A line is sent every 2^18 = 262,144 `sys_clk` cycles, and nothing else in
-// the design can delay that, so the line period is exactly 5.24288 ms at
-// 50 MHz.  That is the point: counting *lines* between a transition of `c` and
-// the next gives clk27 = 2^25 / (lines x 5.24288 ms) with the 50 MHz crystal
-// as the only reference, and the same for hclk.  The rates are therefore
-// measured, not asserted, and a wrong rate is visible rather than merely
-// "off".  hclk5 gets no character of its own: a 371.25 MHz flop path fails
-// timing here (288.77 MHz against 371.33 required, measured on the first
-// version of this design), and hclk is hclk5/5, so a correct hclk rate is what
-// establishes hclk5.
-// SPDX-License-Identifier: MIT
+// c27 and hk are COUNTS rather than bits, and that is the point.  A reader
+// turns a count of bit-8 edges into cycles without knowing which bit was read,
+// which is what the two earlier versions of this readout could not do: a flop
+// count does not reveal a bit's position, so a real doubling of a PLL and a
+// reporting error were indistinguishable.
+//
+// A line is sent every 2^25 = 33,554,432 `sys_clk` cycles -- 671.08864 ms at
+// 50 MHz -- and nothing else in the design can delay that.  The slow cadence is
+// not a choice: the one-wire path that carries this UART to the host only
+// delivers about 100-170 B/s, measured, and a faster readout swamps its bridge
+// and arrives as nothing at all.  Counting *lines* between two edges of a clock's bit 8 gives that
+// clock three ways over -- the count itself, the line period, and hence cycles
+// per line -- with the 50 MHz crystal as the only reference, so a wrong rate
+// is visible rather than merely "off".  hclk5 gets no counter of its own: a
+// 371.25 MHz flop path fails timing here (288.77 MHz against 371.33 required,
+// measured on this design's first version), and hclk is hclk5/5, so a correct
+// hclk rate is what establishes hclk5. SPDX-License-Identifier: MIT
 
 `default_nettype none
 
@@ -239,9 +243,32 @@ module clock_smoke (
     // a synchronised value, and it is only ever read by the UART below.
     reg [1:0] s27;
     reg [1:0] shclk;
+
+    // ------------------------------------------------- counting, not reading
+    //
+    // Bit 12 of each counter toggles once every 4096 cycles of its own clock, so
+    // crossing *that single bit* into sys_clk is a clean one-bit CDC -- no
+    // tearing and no bit-index assumption -- and counting its edges in the sys
+    // domain measures the clock as a NUMBER OF CYCLES rather than as a bit that
+    // then has to be interpreted.  That distinction is the whole reason this
+    // version exists: the previous readout could not tell a real doubling of a
+    // PLL apart from a reporting error, because a flop count does not reveal
+    // which bit is which.  A count does.
+    //
+    // Rates: bit 12 toggles at f/8192, which is 3.3 kHz for a 27 MHz clk27 and
+    // 18.1 kHz for a 148.5 MHz hclk -- far below the 50 MHz sampling clock, so
+    // no edge is ever missed, and the counts fit in 16 bits per line.
+    reg [1:0]  q27;
+    reg [1:0]  qhclk;
+    reg [15:0] n27;
+    reg [15:0] nhclk;
     always @(posedge sys_clk) begin
         s27   <= {s27[0],   cnt_27[23]};
         shclk <= {shclk[0], cnt_hclk[24]};
+        q27   <= {q27[0],   cnt_27[12]};
+        qhclk <= {qhclk[0], cnt_hclk[12]};
+        if (q27[1]   != q27[0])   n27   <= n27   + 16'd1;
+        if (qhclk[1] != qhclk[0]) nhclk <= nhclk + 16'd1;
     end
 
     // ------------------------------------------------------------- line cadence
@@ -250,7 +277,7 @@ module clock_smoke (
     // cycles, so it always finishes inside the window and no tick is ever
     // skipped -- which is what lets a reader treat the period as exact.
 
-    localparam CAD_BITS = 18;
+    localparam CAD_BITS = 25;
     reg [CAD_BITS-1:0] cad;
     wire line_tick = (cad == {CAD_BITS{1'b1}});
     always @(posedge sys_clk) cad <= line_tick ? {CAD_BITS{1'b0}} : cad + 1'b1;
@@ -261,7 +288,7 @@ module clock_smoke (
     // out as 8N1, LSB first, with one idle bit between frames.
 
     localparam BAUD_DIV = 434;
-    localparam MSG_LEN  = 40;
+    localparam MSG_LEN  = 49;
 
     // A line counter, reported in the message as four hex digits.  It exists
     // because the first version of this readout could not settle its own time
@@ -286,12 +313,12 @@ module clock_smoke (
     reg [9:0]  frame;
 
     wire [7:0] ch_s = cnt_sys[24] ? 8'h31 : 8'h30;
-    wire [7:0] ch_c = s27[0]      ? 8'h31 : 8'h30;
-    wire [7:0] ch_h = shclk[0]    ? 8'h31 : 8'h30;
-    wire [7:0] ch_d = lock27      ? 8'h31 : 8'h30;
-    wire [7:0] ch_e = lock_hdmi   ? 8'h31 : 8'h30;
+    wire [7:0] ch_d = lock27     ? 8'h31 : 8'h30;
+    wire [7:0] ch_e = lock_hdmi  ? 8'h31 : 8'h30;
 
-    // "clock-smoke s=A c=B h=C lock=DE n=XXXX\r\n", one case arm per byte.
+    // "clock-smoke s=A lock=DE c27=XXXX hk=XXXX n=XXXX\r\n", one case arm per
+    // byte.  c27 and hk are counts of that clock's bit-8 edges, so a reader gets
+    // cycles per line and never has to know which bit was read.
     function [7:0] msg_byte;
         input [5:0] i;
         begin
@@ -312,30 +339,39 @@ module clock_smoke (
                 6'd13: msg_byte = 8'h3d;  // =
                 6'd14: msg_byte = ch_s;
                 6'd15: msg_byte = 8'h20;  // ' '
-                6'd16: msg_byte = 8'h63;  // c
-                6'd17: msg_byte = 8'h3d;  // =
-                6'd18: msg_byte = ch_c;
-                6'd19: msg_byte = 8'h20;  // ' '
-                6'd20: msg_byte = 8'h68;  // h
-                6'd21: msg_byte = 8'h3d;  // =
-                6'd22: msg_byte = ch_h;
+                6'd16: msg_byte = 8'h6c;  // l
+                6'd17: msg_byte = 8'h6f;  // o
+                6'd18: msg_byte = 8'h63;  // c
+                6'd19: msg_byte = 8'h6b;  // k
+                6'd20: msg_byte = 8'h3d;  // =
+                6'd21: msg_byte = ch_d;
+                6'd22: msg_byte = ch_e;
                 6'd23: msg_byte = 8'h20;  // ' '
-                6'd24: msg_byte = 8'h6c;  // l
-                6'd25: msg_byte = 8'h6f;  // o
-                6'd26: msg_byte = 8'h63;  // c
-                6'd27: msg_byte = 8'h6b;  // k
-                6'd28: msg_byte = 8'h3d;  // =
-                6'd29: msg_byte = ch_d;
-                6'd30: msg_byte = ch_e;
-                6'd31: msg_byte = 8'h20;  // ' '
-                6'd32: msg_byte = 8'h6e;  // n
-                6'd33: msg_byte = 8'h3d;  // =
-                6'd34: msg_byte = hexd(cnt_line[15:12]);
-                6'd35: msg_byte = hexd(cnt_line[11:8]);
-                6'd36: msg_byte = hexd(cnt_line[7:4]);
-                6'd37: msg_byte = hexd(cnt_line[3:0]);
-                6'd38: msg_byte = 8'h0d;  // CR
-                6'd39: msg_byte = 8'h0a;  // LF
+                6'd24: msg_byte = 8'h63;  // c
+                6'd25: msg_byte = 8'h32;  // 2
+                6'd26: msg_byte = 8'h37;  // 7
+                6'd27: msg_byte = 8'h3d;  // =
+                6'd28: msg_byte = hexd(n27[15:12]);
+                6'd29: msg_byte = hexd(n27[11:8]);
+                6'd30: msg_byte = hexd(n27[7:4]);
+                6'd31: msg_byte = hexd(n27[3:0]);
+                6'd32: msg_byte = 8'h20;  // ' '
+                6'd33: msg_byte = 8'h68;  // h
+                6'd34: msg_byte = 8'h6b;  // k
+                6'd35: msg_byte = 8'h3d;  // =
+                6'd36: msg_byte = hexd(nhclk[15:12]);
+                6'd37: msg_byte = hexd(nhclk[11:8]);
+                6'd38: msg_byte = hexd(nhclk[7:4]);
+                6'd39: msg_byte = hexd(nhclk[3:0]);
+                6'd40: msg_byte = 8'h20;  // ' '
+                6'd41: msg_byte = 8'h6e;  // n
+                6'd42: msg_byte = 8'h3d;  // =
+                6'd43: msg_byte = hexd(cnt_line[15:12]);
+                6'd44: msg_byte = hexd(cnt_line[11:8]);
+                6'd45: msg_byte = hexd(cnt_line[7:4]);
+                6'd46: msg_byte = hexd(cnt_line[3:0]);
+                6'd47: msg_byte = 8'h0d;  // CR
+                6'd48: msg_byte = 8'h0a;  // LF
                 default: msg_byte = 8'h20;
             endcase
         end
