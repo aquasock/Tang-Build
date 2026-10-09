@@ -392,3 +392,33 @@ None.
 - User Test: N/A
 
 ---
+
+## 14 COMMIT Unreleased 2026-10-09T01:26:09-07:00
+
+#### Coming From:
+
+Unreleased a0ec7cf
+
+#### Purpose:
+
+Run the comparison entry 13 named as its next step -- the HCLK mux state at the three serialiser FCLK inputs, decoded from the vendor's bitstream and from this build's -- and find out why the TMDS serialisers never receive a fast clock.
+
+#### Outcome:
+
+The comparison was run and it localises the dark display completely: this build's bitstream has no `FCLK` connection at any of its three TMDS serialisers. Both bitstreams were unpacked with the same tool for the same device, and at the same three sites the vendor's carries `.FCLK(R58C182_HCLK0)`, `.FCLK(R101C182_HCLK0)` and `.FCLK(R103C182_HCLK0)` while this build's carries only `.PCLK`, on all three. The design itself does connect it, which is what makes the absence a packing result rather than a design one: `evidence/desktop-core-netlist.json.gz` shows all three `OSER10` cells in `nestang_top` with `FCLK: [2025]`, one shared net, alongside `PCLK: [40]`. The chain is therefore complete and each link is evidenced separately. The design connects all three serialiser `FCLK` inputs to one net, `hclk5`; `hclk5` is the 371.25 MHz TMDS bit clock and is generated correctly, reproduced 2/2 with power cycles; nextpnr cannot route it to `FCLKA` at any of the three serialisers, which is 3 of the 947 dedicated-routing failures, and it records `'hclk5' net was routed using global resources partially`; so the connection never reaches the bitstream; the vendor's bitstream has it, from a Gowin build whose display works; and a serialiser with `FCLK` but no bit clock cannot shift a bit, so no TMDS leaves the part and the sink never locks. `PCLK` being present is what makes the rest of the core work, since the pixel-side logic is clocked and the UART answers at 2 Mbaud, which is exactly why the failure looked like a display fault and not a clocking one. Two earlier leads are retired by this result rather than left standing: the lane-3 finding is not the cause, because the vendor connects `FCLK` at the same three sites and so lane 3 is demonstrably reachable; and the chipdb is not implicated, because the arcs exist in it, `FCLKA <- HCLK30..33` at `(102,181)` and `(100,181)` and `FCLKA <- HCLK10..13` at `(57,181)`, and those sites are in `hclk_pips`, so `create_hclk_switch_matrix` runs for them and creates the pip -- nextpnr has the edge and still cannot route to it. What is left is a single defect: the route from a PLL output through the inter-HCLK network to an IOLOGIC's `FCLK` is not achievable in this nextpnr build for this device even though the graph contains the arcs, which is a routing or model defect rather than missing data. The method that found it is the one the packer's own comments had already used twice, comparing this build's bitstream against Gowin's at a site where both agree and looking for what is absent rather than what differs, and it worked here because the pad configuration and the TMDS serialiser attributes had already passed that same comparison, which put the remaining gap one layer up in the routing. `evidence/desktop-clock-routing.txt` now carries the port maps from both unpacks, the six-link chain and what this result retires. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 14 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Scope the routing defect before writing anything against it, since the fix belongs in nextpnr's Gowin arch or router rather than in the core, the packer or the database, and the shape of it is not yet known: establish whether the PLL output reaches the serialisers' lane at all through the inter-HCLK wires, or whether the failure is in the last hop that `create_hclk_switch_matrix` does create, and settle that from nextpnr's own routing state rather than by further inference, because this cycle's predecessor and this one both show that reads of these tables are easy to make against the wrong structure. The desktop core needs no change for this and should not be rebuilt until the route works. Entry 13's next step is discharged by this entry and entry 12's `BUFG` mechanism remains superseded.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

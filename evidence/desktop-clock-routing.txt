@@ -195,3 +195,80 @@ the absence of an HCLK datum, establish which structure holds it.
 
 That is a note about method, not about the device: the fault is still real,
 still in the open flow, and still exactly where it was.
+
+==================================================================
+8. The answer: the serialisers' fast clock is not in the bitstream
+==================================================================
+
+Entry 13's next step was to compare the HCLK mux state at the three
+serialiser FCLK inputs, decoded from the vendor's bitstream and from ours.
+That comparison was run and it localises the fault completely.
+
+Our own synthesised netlist does connect FCLK.  All three OSER10s share one
+net, 2025:
+
+    nestang_top / u_hdmi.hdmi.serializer.gwSer0 (OSER10)
+        FCLK: [2025]      PCLK: [40]      Q: [7566]      RESET: [50]
+    nestang_top / u_hdmi.hdmi.serializer.gwSer1 (OSER10)
+        FCLK: [2025]      PCLK: [40]      Q: [7577]      RESET: [50]
+    nestang_top / u_hdmi.hdmi.serializer.gwSer2 (OSER10)
+        FCLK: [2025]      PCLK: [40]      Q: [7588]      RESET: [50]
+
+(source: evidence/desktop-core-netlist.json.gz)
+
+Both bitstreams unpacked with the same tool, same device, same three sites:
+
+  vendor  R58C182:  .FCLK(R58C182_HCLK0)   .PCLK(R58C182_CLK0)
+  vendor  R101C182: .FCLK(R101C182_HCLK0)  .PCLK(R101C182_CLK0)
+  vendor  R103C182: .FCLK(R103C182_HCLK0)  .PCLK(R103C182_CLK0)
+
+  ours    R58C182:  .PCLK(R58C182_CLK0)     -- no .FCLK
+  ours    R101C182: .PCLK(R101C182_CLK0)    -- no .FCLK
+  ours    R103C182: .PCLK(R103C182_CLK0)    -- no .FCLK
+
+OUR BITSTREAM HAS NO FCLK CONNECTION AT ANY OF THE THREE TMDS SERIALISERS.
+PCLK is present, which is why the core runs and its pixel-side logic works;
+FCLK is the serialiser's shift clock, and without it the cell cannot emit a
+bit, so there is no TMDS at all and the sink never locks.
+
+The chain, each link evidenced separately:
+
+  1. the design connects all three OSER10 FCLK inputs to one net, hclk5
+     (net 2025)                          -- our netlist
+  2. hclk5 is the 371.25 MHz TMDS bit clock and is generated correctly,
+     2/2 reproducible with power cycles  -- clock-smoke divider runs
+  3. nextpnr cannot route it to FCLKA at any of the three serialisers:
+     3 of the 947 dedicated-routing failures, and
+     "'hclk5' net was routed using global resources partially"
+                                         -- .open-pnr/nextpnr.log
+  4. therefore the connection never reaches the bitstream  -- this unpack
+  5. the vendor's bitstream does have it, at the same three sites, from a
+     Gowin build whose display works           -- this unpack
+  6. no FCLK at the serialiser means no TMDS, which is the dark display
+
+==================================================================
+9. What this retires
+==================================================================
+
+The lane-3 lead of section 6 is NOT the cause.  The vendor connects FCLK at
+the same three sites, so lane 3 is reachable and its fabric-only clock entry
+does not prevent the connection.  It stays recorded as measured, and it is
+not the blocker.
+
+The chipdb is not implicated.  The arcs exist -- `FCLKA <- HCLK30..33` at
+(102,181) and (100,181), `FCLKA <- HCLK10..13` at (57,181) -- and those sites
+ARE in `hclk_pips`, so `create_hclk_switch_matrix` runs for them and creates
+the pip.  nextpnr has the edge and still cannot route to it.
+
+The remaining fault is one thing: the route from a PLL output through the
+inter-HCLK network to an IOLOGIC's FCLK is not achievable in this nextpnr
+build for this device, even though the graph contains the arcs.  That is a
+routing/model defect rather than missing data, and it is where the next cycle
+begins.
+
+Method note.  What found this was the trick the packer's own comments had
+already used twice -- compare our bitstream against Gowin's at a site where
+both builds agree, and look for what is ABSENT rather than what differs.  The
+pad configuration passed that comparison and so did the TMDS serialiser
+attributes, which is exactly why the remaining gap was one layer up, in the
+routing rather than in the configuration.
