@@ -422,3 +422,34 @@ None.
 - User Test: N/A
 
 ---
+
+## 15 COMMIT Unreleased 2026-10-09T01:32:38-07:00
+
+#### Coming From:
+
+Unreleased 36fe909
+
+#### Purpose:
+
+Bring `README.md` and `FINDINGS.md` in line with the project's actual state, because both still described a wall the project passed and would have sent the next agent back into it.
+
+#### Outcome:
+
+The documentation now matches the work, which it had stopped doing in the one way that matters for a handoff. `README.md`'s status list claimed the desktop core "cannot place a PLL" because "`GW5AST-138C` has no clock model in the open database" with "`pad_pll`/`hclk_pips` empty"; the database regenerated from the local Gowin install carries `hclk_pips` 171, `io2hclk` 6, `hclk_div2` 6 and `HAS_5A_HCLK`, the PLLs place, and the design places, routes, packs and loads — so that item is corrected and split into the part that works and the part that does not, the latter being the missing `FCLK` route rather than a missing clock model. Its `.fs` → `.bin` item was unticked and is now ticked, since `tools/fs-to-bin.py` reproduces Gowin's own `.bin` from Gowin's own `.fs` byte for byte and the result loaded through `tangload` on the board. The README also claimed `oss-cad-suite` carries a usable `GW5AST-138C` database, which contradicts `TOOLCHAIN.md` and is false, so the reproduce section now says the database is built locally and points at the recorded hash. Its "no project core has been built this way yet" and "binary format gap" entries in the not-verified list are retired and replaced with what is genuinely unproven — the display, the OLED and audio paths, and timing at pixel rates — and its verified list gained the desktop core's two loads and the exercised `.bin` path. Its core-location line now says `fpga/desktop` lives in the TinyTang tree and that this repository's `fpga/` holds `clock-smoke`, its layout gained the scripts and tools it was missing, and its `pnr-desktop.sh` line no longer says the script stops at the PLL. `FINDINGS.md` changed in five places: section 4's heading called the binary gap the main obstacle and now records it closed, with the validation and the one real encoding difference, the vendor's 96-bit prologue that apicula omits and that clock-smoke's successful run shows is harmless; section 6's list of what is unproven is replaced, since the clock tree and the TMDS path are no longer untested and the display's cause is located; section 7's next steps are replaced with the two that remain; section 8's provenance note said the published database was in use and that using it "needs nothing", and now records that the database in use is generated from the vendor install at `/home/vash/tools/gowin-1.9.11.03`, why the published one cannot drive this part, and the hash a successor can check against; and section 9's place-and-route paragraph, which recorded the wall as current, now records that it is gone and that the display fails for one located reason. Four links written during this cycle pointed outside the repository and were corrected before commit. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 15 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+`scripts/pnr-desktop.sh` is still unrepaired and is the remaining handoff hazard, because it calls bare `nextpnr-himbaechel` and so takes whatever is first on PATH — the suite's, which carries the published database and would reproduce the wall the README no longer describes — while the binary that works is the fork's build and currently lives in a scratch directory; pin it and fail clearly when it cannot be found. After that, scope the missing clock route in nextpnr, which is the one defect keeping the display dark, from nextpnr's own routing state rather than by inference. Neither needs a hardware cycle, and the desktop core should not be rebuilt until the route works.
+
+#### Files Modified:
+
+- README.md
+- FINDINGS.md
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

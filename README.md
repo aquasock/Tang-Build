@@ -6,9 +6,12 @@ Building FPGA bitstreams for the Sipeed **Tang Console 138K** with an
 This repository records the work, the exact commands, and the raw evidence.
 The short version: on 2026-10-08 a bitstream produced by `yosys` →
 `nextpnr-himbaechel` → `gowin_pack`, loaded by `openFPGALoader`, ran on a real
-Tang Console 138K and talked over its UART; and the project's own desktop core
-now synthesises with the same tools, down to a netlist with every clock
-primitive the vendor build has.
+Tang Console 138K and talked over its UART.  The project's own desktop core now
+goes through the whole flow with the same tools — it places, routes, packs,
+loads over both JTAG and `tangload`, and runs on the board, answering on UART1
+at 2 Mbaud.  Its HDMI output is the one thing that does not yet work, and the
+reason is located rather than guessed: the route that carries the TMDS bit
+clock to the serialisers is missing inside nextpnr.
 
 ## Why this matters
 
@@ -29,27 +32,37 @@ Verilog  --yosys-->  JSON  --nextpnr-himbaechel-->  routed JSON  --gowin_pack-->
 - [x] Bitstreams built for `GW5AST-LV138PG484AC1/I0` (incl. a picorv32 SoC that
       timing-closes at 142 MHz)
 - [x] **A bitstream built this way runs on the real board** and transmits over UART
-- [x] The project's own `fpga/desktop/` core **synthesises** with the open flow —
+- [x] The project's own desktop core **synthesises** with the open flow —
       8,585 cells, and the three PLLs, one CLKDIV and three OSER10s the vendor
-      build has ([`OPEN-FLOW-DESKTOP.md`](OPEN-FLOW-DESKTOP.md))
-- [ ] …placed, routed, packed and running on the board.  **Blocked upstream:**
-      `GW5AST-138C` has no clock model in the open database.  With the PLLs in,
-      nextpnr cannot place a PLL (`pad_pll`/`hclk_pips` empty for this device,
-      populated for GW5A-25A, and apicula's `_pll_pads` has no entry for it).
-      With the PLLs removed entirely — see
-      [`scripts/nopll-variant.sh`](scripts/nopll-variant.sh) — the design
-      **synthesises and places completely**, then fails to *route the clock
-      net*, and nextpnr aborts on a C++ exception.  So the gap is this chip's
-      clocking, not the PLL alone.  nextpnr master and apicula main, as of
-      2026-10-08, cover neither.
-- [ ] `.fs` → `.bin` conversion, so open-built cores can load from the SD card
-      through TinyTang's existing `tangload`
+      build has ([`OPEN-FLOW-DESKTOP.md`](OPEN-FLOW-DESKTOP.md)).  The core
+      lives at `fpga/desktop` in the TinyTang tree; this repository's `fpga/`
+      holds the `clock-smoke` bring-up design
+- [x] …**places, routes, packs and loads.**  The no-PLL wall is gone: the
+      database regenerated from the local Gowin install carries `hclk_pips`
+      171, `io2hclk` 6, `hclk_div2` 6 and `HAS_5A_HCLK`, where the published
+      one has zero of each, so the PLLs place and the whole design routes.
+- [ ] …**and runs with a display.**  The core runs — loaded over two-wire
+      `tangload`, it answers on UART1 at 2 Mbaud after a full SRAM erase, and
+      the console returns to its prompt — but its HDMI output produces no
+      signal.  This build's bitstream has **no `FCLK` connection at any of the
+      three TMDS serialisers**, where the vendor's has one at all three, because
+      nextpnr cannot carry the 371.25 MHz TMDS bit clock from the PLL output to
+      those inputs on dedicated routing.  The fault is in the router, not in
+      the core, the packer or the database —
+      [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt)
+- [x] `.fs` → `.bin` conversion, so open-built cores load from the SD card
+      through TinyTang's existing `tangload` —
+      [`tools/fs-to-bin.py`](tools/fs-to-bin.py), validated by reproducing
+      Gowin's own `.bin` from Gowin's own `.fs` byte for byte, and exercised on
+      the board
 
 ## Reproduce it
 
-`oss-cad-suite` carries everything, including apicula 0.34 and the
-`GW5AST-138C.msgpack.xz` device database. See [`TOOLCHAIN.md`](TOOLCHAIN.md) for
-versions and paths; then:
+`oss-cad-suite` carries the tools, including apicula 0.34.  It does **not**
+carry a usable `GW5AST-138C.msgpack.xz`: that database is *built* from Gowin's
+`.dat` files, so it is regenerated locally from a vendor install —
+[`TOOLCHAIN.md`](TOOLCHAIN.md) has the command, the paths and the expected hash
+to check the result against.  Then:
 
 ```bash
 scripts/build-open-bitstream.sh          # builds + packs, leaves .fs files in build/
@@ -72,19 +85,26 @@ Verified on hardware, with the raw bytes kept under `evidence/`:
 - the loaded design's UART output was captured off the board at 115200 on
   `/dev/ttyUSB1`: `evidence/uart-live-capture.bin` (17,096 bytes), decoded to
   `evidence/apicula-message.txt`
+- the **project's own desktop core** was built this way and loaded onto the
+  board **twice over**: as a `.bin` through TinyTang's `tangload` in two-wire
+  mode, and earlier as a `.fs` over JTAG.  It runs — the console reports
+  `core 84 answering on UART1 at 2000000 baud` and returns to its prompt with
+  no hang (`evidence/desktop-2wire-cycle.txt`)
+- the **`.fs` → `.bin` path is exercised, not merely written**:
+  `tools/fs-to-bin.py` reproduces Gowin's own `.bin` from Gowin's own `.fs`
+  byte for byte (`sha256 c8406c7f…`, `cmp` clean), and the file it produces
+  loads on the board
 
 Not verified, and stated plainly in [`FINDINGS.md`](FINDINGS.md):
 
-- **no project core has been built this way yet** — the bitstreams proven on
-  hardware are Apicula's own examples
-- the **binary format gap**: Apicula emits Gowin's text `.fs`, while TinyTang's
-  in-firmware programmer (`tangload`) writes the vendor **binary** `.bin`, so
-  `tangload` rejects these images as-is
+- **the display.**  The desktop core runs, but its HDMI output produces no
+  signal: this build's bitstream has no `FCLK` connection at the three TMDS
+  serialisers, where the vendor's has one at all three.  The missing route is
+  inside nextpnr — not in the core, the packer or the database — see
+  [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt)
+- the core's **OLED and audio** paths, which are built but unexercised
 - the UART capture **drops bytes occasionally** (USB-serial), so it is evidence
   of content, not a byte-exact image; the `.fs` file is the exact artifact
-- the risky primitives for a real core — the GW5A clock tree/PLL, the
-  IOLOGIC/TMDS path, BSRAM/DSP packing — are untested here beyond Apicula's own
-  example coverage
 
 ## Layout
 
@@ -95,14 +115,18 @@ FINDINGS.md                   detailed results, transcripts, open questions
 TOOLCHAIN.md                  what is installed, versions, paths, licences
 THIRD_PARTY.md                upstream projects and their licences
 scripts/build-open-bitstream.sh   the whole recipe, one command
+scripts/build-clock-smoke.sh  build the fpga/clock-smoke bring-up design
 scripts/synth-desktop.sh      synthesise fpga/desktop to a netlist
 scripts/synth-desktop.ys      the yosys script it runs
-scripts/pnr-desktop.sh        take that netlist into nextpnr (stops at the PLL)
+scripts/pnr-desktop.sh        take that netlist into nextpnr — needs the fork's
+                              nextpnr on PATH, not oss-cad-suite's
 scripts/nopll-variant.sh      build the no-PLL bring-up variant (experiment)
 patches/                      source edits the design genuinely needs
  0001-open-toolchain-portability.patch
 tools/capture-uart.py         read the FPGA's UART and hexdump it
 tools/decode-message.py       decode the demo payload (bytes / text / hexdump)
+tools/decode-clock-smoke.py   decode clock-smoke's readout lines
+tools/fs-to-bin.py            Gowin text .fs → vendor binary .bin, for tangload
 evidence/                     raw captures, logs and built bitstreams
 ```
 

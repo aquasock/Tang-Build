@@ -93,7 +93,7 @@ It loops continuously. Two details in the payload worth noting:
 - the UART module is from the **icebreaker** examples (© 2018 Piotr
   Esden-Tempski), whose copyright header is still in the Verilog
 
-## 4. The binary format gap (the main obstacle to a card-based flow)
+## 4. The binary format gap (closed)
 
 TinyTang's in-firmware loader failed on the same bitstream, and the reason is
 mundane — two different Gowin bitstream encodings:
@@ -131,6 +131,29 @@ opening it as text), which confirms the two are distinct encodings. So:
   `tools/` or inside the firmware's existing Gowin programmer — to keep
   TinyTang's "cores live on the SD card" ergonomics
 
+### Resolved
+
+The converter is [`tools/fs-to-bin.py`](tools/fs-to-bin.py), and the gap is
+closed. Gowin ships the same configuration data in both encodings and the
+difference is only the encoding, so the step is a repack with no framing added
+or removed. It was validated against a design for which the vendor's *own* pair
+exists, `TinyTang/build/desktop/source/impl/pnr/desktop.{fs,bin}`: packing the
+vendor's `.fs` reproduces the vendor's `.bin` byte for byte
+(`sha256 c8406c7f8573097b98de3923def1693ffdd9f8fe304e224775249fc5f0e9c592`,
+`cmp` clean), and the `.fs` header says `//Compress: OFF`, so the 1:8 mapping
+holds. The desktop core's own `.bin` was then placed on the card and loaded
+through `tangload` on the board, which reported `core loaded` and answered on
+UART1 at 2 Mbaud — see [`evidence/desktop-2wire-cycle.txt`](evidence/desktop-2wire-cycle.txt).
+`tangload` never parses the framing: `fpga_program` in
+`ports/bl616/tang_jtag_programmer.c` reads the file in blocks and shifts them
+straight to TDI.
+
+One encoding difference is real and harmless, recorded so it is not chased
+again: the vendor's bitstream carries a 96-bit prologue — `0xff` padding, the
+`dede dede` marker, then more padding — before the first `a5c3`, and apicula's
+omits it. clock-smoke, which ran on this board, carries apicula's framing
+exactly, so the FPGA's configuration engine accepts it either way.
+
 ## 5. Capture fidelity — a caveat about the evidence
 
 The live capture is **not** a byte-exact image of one loop. Two measurements
@@ -149,34 +172,49 @@ settle it outright.
 
 ## 6. What is still unproven
 
-- **Our own cores.** Everything proven on hardware is Apicula's own example.
-- **The clock tree.** GW5A PLL/HCLK support is conditional in nextpnr's
-  architecture generator (`CHIP_HAS_PLL_HCLK`, `CHIP_HAS_CLKDIV_HCLK`). A real
-  core with several clock domains is the open question.
-- **TMDS/IOLOGIC.** The HDMI output path needs SERDES/OSER/ODDR primitives.
-  Apicula has examples for them on GW5A-25A; untested on the 138C here.
-- **BSRAM/DSP packing**, and timing closure at pixel rates (~93 MHz for the
-  project's desktop core).
+- **The display.**  The desktop core runs on the board and answers on UART1 at
+  2 Mbaud, but its HDMI output produces no signal.  The cause is located: this
+  build's bitstream has no `FCLK` connection at any of the three TMDS
+  serialisers, where the vendor's has one at all three, and the reason is that
+  nextpnr cannot route the 371.25 MHz TMDS bit clock from the PLL output to
+  those inputs on dedicated routing.  That is a router defect, not a gap in the
+  database — the arcs exist and nextpnr creates the pip.  Evidence in
+  [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt).
+- **The core's OLED and audio paths**, which are built but unexercised.
+- **Timing at pixel rates**, which the open flow reports but which has not been
+  checked against the vendor's own numbers for this design.
+- The UART capture fidelity caveat in section 5 still stands.
 
 ## 7. Next steps
 
-1. Pre-flight the three risky primitives against this board using Apicula's own
-   examples (`pll7`, `oser10`/`oddr-tlvds`, the DPB/SDP BSRAM family), rather
-   than discovering gaps inside a full core.
-2. Build `fpga/desktop/` from TinyTang with its existing `desktop.cst`, load it,
-   and compare against the vendor-built bitstream for the same source
-   (3,780 LUTs / 2,313 FFs / 14 BSRAMs / 1.5 DSPs; vendor timing closed at
-   93.174 MHz pixel). Same source, so any difference is the toolchain.
-3. Decide the `.fs` → `.bin` question, since it decides whether open-built cores
-   can be dropped on the SD card like every other core.
+1. Fix the missing clock route.  The route from a PLL output through the
+   inter-HCLK network to an IOLOGIC's `FCLK` is not achievable in this nextpnr
+   build for this device even though the graph contains the arcs, and that one
+   defect is what keeps the display dark.  Scope it from nextpnr's own routing
+   state before writing anything against it — whether the PLL output reaches
+   the serialisers' lane at all, or whether the failure is in the last hop that
+   `create_hclk_switch_matrix` does create.
+2. `scripts/pnr-desktop.sh` calls bare `nextpnr-himbaechel`, so it takes
+   whatever is first on PATH.  The binary that carries the regenerated database
+   is the fork's build, and it currently lives in a scratch directory.  Pin the
+   script to it and fail clearly when it cannot be found.
+3. The core itself needs no change for any of the above, and should not be
+   rebuilt until the route works.
 
 ## 8. Provenance note
 
 Nothing from Sipeed's or Gowin's download bundles is redistributed here. The
-device database used is Apicula's, published in its PyPI package; Apicula builds
-it from vendor data files inside a Docker image (`pepijndevos/apicula:1.9.10.03`)
-at *their* end, and ships the result. Building a chipdb locally would need a
-Gowin install (`GOWINHOME`); using the published one needs nothing.
+device database in use is **generated locally from the vendor install** at
+`/home/vash/tools/gowin-1.9.11.03`, not the one published in Apicula's PyPI
+package. It has to be: the published database is built by Apicula's CI from
+vendor `.dat` files and, for `GW5AST-138C`, carries none of the clock data —
+`hclk_pips` 0, `io2hclk` 0, `hclk_div2` 0 and no `HAS_5A_HCLK` — which nextpnr
+needs to place a PLL. The locally built one carries `hclk_pips` 171, `io2hclk`
+6, `hclk_div2` 6 and the flag, and its hash matches the one
+[`TOOLCHAIN.md`](TOOLCHAIN.md) records, so a successor can check they have
+the same database before trusting any result. Building it needs a Gowin
+install (`GOWINHOME`); the toolchain bundle does not ship one and does not ship
+a usable database either.
 
 ## 9. The project's own core (added later the same day)
 
@@ -193,29 +231,25 @@ OLED-terminal sweep build (`build/oled-terminal/sweep-blockfix`); the build
 TinyTang ships as `desktop.bin` (`build/desktop/place2`) uses **2641 LUT + 301
 ALU, 1774 FF, 12 BSRAM, 1 DSP**.
 
-Place and route is a second half, and it stops. `nextpnr-himbaechel` packs the
-whole design — BSRAM, DSP, and the IOLOGIC path that carries the three OSER10s —
-and then cannot place a PLL, because **`GW5AST-138C` has no PLL in the open
-database**. The clock *routing* is there, but `pad_pll` and `hclk_pips` are empty
-for this device and populated for GW5A-25A, apicula's `_pll_pads` table has no
-entry for it, and nextpnr's GW5A PLL support is explicitly "PLLA-type PLLs …
-used in GW5A-25A chips".
+Place and route is a second half, and it now completes.  This was the wall for
+a while — `nextpnr-himbaechel` packed the whole design and then could not place
+a PLL, because the *published* `GW5AST-138C` database carries no PLL site and no
+clock pips.  Regenerating that database from the local Gowin install removes
+the wall entirely: it carries twelve PLL sites, `hclk_pips` 171, `io2hclk` 6,
+`hclk_div2` 6 and `HAS_5A_HCLK` where the published one has zero of each, so
+the three PLLs place and the whole design routes.  Evidence in
+[`evidence/desktop-core-pnr.txt`](evidence/desktop-core-pnr.txt), and the
+earlier no-PLL experiment that first exposed a clock-routing gap in
+[`evidence/desktop-core-nopll.txt`](evidence/desktop-core-nopll.txt).
 
-That turned out to be the first thing to fall over a larger gap. Removing the
-PLLs altogether — every clock domain driven from the 50 MHz input, with the host
-interface's frequency parameter retargeted so the BL616 link keeps its baud
-(`scripts/nopll-variant.sh`) — gives a variant that **synthesises (8,732 cells)
-and places completely**, then fails to *route the clock net*: the dedicated
-clock network does not reach three tiles, and nextpnr aborts with
-`std::out_of_range` rather than reporting it. Six placement seeds, all
-different, lose the same way. The device reports one global clock buffer where
-the vendor build of this design uses four primary clocks and three GCLK_PINs,
-and this core carries about four times the clock loads of anything upstream has
-routed on this die.
-
-So the gap is this chip's *clocking*, not the PLL alone. Neither project has
-anything newer: nextpnr master HEAD (`861c57be`, 2026-10-07) is the revision our
-binary runs, and apicula main is what we have cloned. Evidence in
-[`evidence/desktop-core-pnr.txt`](evidence/desktop-core-pnr.txt) and
-[`evidence/desktop-core-nopll.txt`](evidence/desktop-core-nopll.txt), reasoning
-in [OPEN-FLOW-DESKTOP.md](OPEN-FLOW-DESKTOP.md).
+The core then packs, loads and **runs**, and the display is the one thing left
+broken.  It is broken for a single located reason: nextpnr cannot carry the
+371.25 MHz TMDS bit clock from the PLL output to the three serialisers' `FCLK`
+inputs on dedicated routing — three of the 947 dedicated-routing failures in
+that run name exactly those pins — so this build's bitstream has no `FCLK`
+connection at any of them, where the vendor's has one at all three.  The core
+runs regardless because `PCLK` is present, which is why the failure presents as
+a display fault rather than a clocking one.  The full chain, and the four
+candidate explanations that were measured and refuted along the way, are in
+[`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt);
+reasoning in [OPEN-FLOW-DESKTOP.md](OPEN-FLOW-DESKTOP.md).
