@@ -991,3 +991,36 @@ Deploy the heartbeat build after a power cycle, since `ea4a9b9f` has never been 
 - User Test: NOT RUN
 
 ---
+
+## 33 COMMIT Unreleased 2026-10-09T11:52:22-07:00
+
+#### Coming From:
+
+Unreleased b26acf8
+
+#### Purpose:
+
+Find out why the heartbeat's brightness never showed on the board, and give the envelope a shape an eye can actually watch.
+
+#### Outcome:
+
+The heartbeat now beats visibly, and the first board test of it was dark for a reason worth more than the panel. Four lanes dark with the three lock lanes lit is the signature of a fault common to all four instances rather than of any clock, and it was the state encoding: yosys's FSM pass re-encoded the three-bit `st` register ONE-HOT, six state bits for six states, and the transition table it built has rows only for states 0 to 5. Gowin flops power up at zero, so on silicon `st` came up as six zeros, which is not a valid one-hot code, with no transition defined out of it and no reset -- a trap in which `env` never leaves 0 and the LED comparison is never true. The synthesis log says it in one line (`mapping auto encoding to 'one-hot' for this FSM`) and the routed netlist proves it: evaluating the next-state logic with every flop at its power-up value gives all-zero for all four FSMs. The fix is one attribute, `(* fsm_encoding = "none" *)` on `st`, which keeps the register binary -- and binary zero IS `ST_WAIT1`, the state the beat starts from -- so the design's no-reset convention becomes safe instead of fatal; afterwards the FSM pass extracts nothing, the register is three flops, the same evaluation reports every FSM leaving the all-zero state, and the beat appeared on the board. That generalises: any reset-less `case` FSM in this flow on this device is one-hot and dead in the bitstream, silently, with a clean timing report, and no simulation can show it because the simulation keeps the binary encoding and the testbench forces the state that is valid in binary. The brightness took five more board tests and three of four hypotheses died. A second, entirely different modulator -- an eight-bit accumulator whose carry drives the LED, adder-only, the same structure as the working counters -- looked exactly as flat as the magnitude comparison, which is what moved the fault off the packer and off the logic. A carrier ladder across the four lanes, a decade apart and two thousand times in total, 195 kHz down to 100 Hz, changed nothing, which cleared the rate. The `s=` field of the message then cleared the envelope: it had been a sanity bit for the 50 MHz input, stuck at 0 since `cnt_sys` came back as 24 flops instead of 25, and it now reports the largest envelope value seen below the top of the ramp -- which a ramping envelope must pass through on its way up. It reads `f`, so the envelope had been ramping all along and the design was right the whole time. The LEDs were cleared by putting a STEADY six per cent duty at 200 Hz on the spare lane: it reads clearly dim beside the full-brightness lock lanes, so these LEDs do render a duty as brightness. What was missing was time. A brightness change has to outlast the eye's integration window to be seen as a change at all, and the envelope decayed over 64 ms inside a single 107 ms sound, so four perfectly correct lanes read as nothing but on and off -- and no carrier rate could have fixed that, which is exactly why the ladder changed nothing. The delivered shape keeps the beat at one second and the attack fast, 43 ms to full, and stretches only the decay to 255 ms, so the brightness can be watched coming down; S2 begins at 402 ms, peaks at 120 of 255 so it is clearly the quieter of the two, and fades over 120 ms; 454 ms of the second is dark. The carrier is about 200 Hz on every lane, one `CARRIER_DIV` value per lane, so a lane's carrier is that clock over `256 * CARRIER_DIV`. One probe is recorded as a mistake to avoid: a one-hertz carrier at six per cent duty was read as proof that the LED displays duty, which it was not -- it is on for 62 ms a second, a statement about timing, not about brightness; the steady-dim probe is what actually answers the brightness question. `tools/test-heartbeat-waveform.sh` asserts every figure of the new shape and fails if any moves, and it taught its own lesson twice, because the testbench must name every register the design relies on powering up at zero and a newly added register left at `x` makes the LED read dead. The cycle's artifact is `/home/vash/tools/clock-smoke/clock-smoke.fs`, sha256 `f46456056d5a5c31df0d05d4a7bdb392cc3df897fd0b63da15b6ff558df46706`, with no timing failures, 202.51 MHz for clk27 against 27.00 asked, 142.39 for hclk against 74.25, 146.24 for clk_nes against 21.50, and no FSM extracted at all; the user reports the fade visible and the second sound quieter, and accepted the result. The `hclk` counter again reads `hk=0000` in this placement, the placement-dependent anomaly already recorded, with `lock=111` throughout. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 33 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Make all eight lanes look good together, which is what qualifies the LED PMOD as an instrument: the four heartbeats are settled, so the remaining work is the three lock lanes and the spare reading as part of one panel rather than as leftovers, and only then is the socket characterised well enough to build on. After that the desktop core's `ODIV0_SEL` still wants taking from 100 to 50, since entry 31 measured that it halves its pll_27 and puts hclk5 at 185.625 MHz instead of 371.25, half the TMDS bit clock; the HDMI comes after that with sections 18 and 19 of `evidence/desktop-clock-routing.txt` still the handoff. Carry the one-hot finding into that work: any reset-less `case` FSM in the desktop core is silently dead in its bitstream, and a display pipeline is exactly where one would hide, so the cheap check is to re-synthesise with the log kept and look for `Recoding FSM`. Keep the power-cycle rule on every load, keep `/home/vash/tools` as the durable home for builds, and do not re-walk the carrier ladder or the carrier rate, both refuted in this entry.
+
+#### Files Modified:
+
+- fpga/clock-smoke/clock_smoke.v
+- tools/test-heartbeat-waveform.sh
+- evidence/clock-smoke-heartbeat-visible.txt
+- evidence/clock-smoke-heartbeat.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

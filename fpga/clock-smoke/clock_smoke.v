@@ -401,7 +401,7 @@ module clock_smoke (
     reg        tx_busy;
     reg [9:0]  frame;
 
-    wire [7:0] ch_s = cnt_sys[24] ? 8'h31 : 8'h30;
+    wire [7:0] ch_s = hexd(env_ramp_probe[7:4]);
     wire [7:0] ch_d = lock27     ? 8'h31 : 8'h30;
     wire [7:0] ch_e = lock_hdmi  ? 8'h31 : 8'h30;
     wire [7:0] ch_f = lock_nes   ? 8'h31 : 8'h30;
@@ -552,11 +552,27 @@ module clock_smoke (
     // divisors are exact; pll_nes's is 21,505.376 rounded down, a 17 ppm error,
     // which is one beat of slip in about sixteen hours.
     wire led_sys, led_27, led_hclk, led_nes;
+    wire [7:0] env_sys;
 
-    heartbeat #(.TICK_DIV(50_000), .TICKS(1000)) hb_sys  (.clk(sys_clk), .led(led_sys));
-    heartbeat #(.TICK_DIV(27_000), .TICKS(1000)) hb_27   (.clk(clk27),   .led(led_27));
-    heartbeat #(.TICK_DIV(74_250), .TICKS(1000)) hb_hclk (.clk(hclk),    .led(led_hclk));
-    heartbeat #(.TICK_DIV(21_505), .TICKS(1000)) hb_nes  (.clk(clk_nes), .led(led_nes));
+    // All four lanes on the same slow carrier, about 200 Hz, which is above
+    // flicker fusion and slow enough for any reasonable LED drive.  The ladder
+    // that spanned 195 kHz to 100 Hz changed nothing, so the carrier rate is
+    // not what is hiding the envelope.
+    heartbeat #(.TICK_DIV(50_000), .TICKS(1000), .CARRIER_DIV(977))  hb_sys  (.clk(sys_clk), .led(led_sys), .env_out(env_sys));
+    heartbeat #(.TICK_DIV(27_000), .TICKS(1000), .CARRIER_DIV(527))  hb_27   (.clk(clk27),   .led(led_27));
+    heartbeat #(.TICK_DIV(74_250), .TICKS(1000), .CARRIER_DIV(1450)) hb_hclk (.clk(hclk),    .led(led_hclk));
+    heartbeat #(.TICK_DIV(21_505), .TICKS(1000), .CARRIER_DIV(420))  hb_nes  (.clk(clk_nes), .led(led_nes));
+
+    // Ramp evidence for the `s=` field of the message.  The envelope is supposed
+    // to climb six per millisecond from zero to 255, so it must pass through
+    // values just under the top: this holds the largest envelope value ever seen
+    // that is still below 250.  A ramping envelope reaches 246 and this reads
+    // 15.  An envelope that steps straight from zero to 255 never passes below
+    // 250 on the way up, so this stays 0 -- and that, not any impression of the
+    // LEDs, is what says whether the bitstream ramps the envelope at all.
+    reg [7:0] env_ramp_probe;
+    always @(posedge sys_clk)
+        if (env_sys > env_ramp_probe && env_sys < 8'd250) env_ramp_probe <= env_sys;
 
     // Module lane n is module pin (1, 2, 3, 4, 7, 8, 9, 10)[n], and the dock
     // interleaves those onto IO0/2/4/6 for lanes 0-3 and IO1/3/5/7 for lanes
@@ -569,6 +585,10 @@ module clock_smoke (
     assign pmod1_io1 = lock27;       // LED 5 <- pll_27    LOCK, steady
     assign pmod1_io3 = lock_hdmi;    // LED 6 <- pll_hdmi  LOCK, steady
     assign pmod1_io5 = lock_nes;     // LED 7 <- pll_nes   LOCK, steady
+
+    // The spare lane goes back to being a spare, held HIGH rather than left
+    // floating, so that nothing on the panel is dark by accident and any dark
+    // lane is a fault rather than a design choice.
     assign pmod1_io7 = 1'b1;         // LED 8   spare
 endmodule
 
@@ -592,29 +612,55 @@ endmodule
 // clock's frequency enters.  A clock at the wrong rate beats at the wrong rate,
 // which is what the square-wave version told us, now with a shape.
 //
-// Brightness is the envelope carried by PWM: `pwm` free-runs through 256 values
-// in this clock and the lane is HIGH while it is below `env`, so the LED's
-// average is env/256.  The carrier is that clock over 256 -- 84 to 290 kHz
-// across the four clocks here, far above anything an eye resolves, and low
-// enough that the LED has no trouble following it.
+// Brightness is the envelope carried on a carrier the LED can actually follow.
+// `pwm` steps through all 256 values once per carrier period and the lane is
+// HIGH while it is below `env`, so the duty -- and so the average brightness --
+// is env/256.
 //
-// The figures are the ordinary adult ones: S1 about 105 ms wide and beginning at
-// the beat, S2 about 67 ms wide beginning at 332 ms, the remaining 0.6 s dark.
+// CARRIER_DIV sets that period: `pwm` steps once every CARRIER_DIV clocks, so
+// the carrier is the lane's clock over 256 * CARRIER_DIV.  That parameter, and
+// not the modulation, is the whole point of this version.
+//
+// The first build ran the carrier as fast as it could -- the clock over 256,
+// which is 84 to 290 kHz across these four lanes -- and every lane read as fully
+// on for the whole non-zero span of the envelope and dark outside it.  Two
+// things had to be untangled, and the message's `s=` field untangled them: it
+// reports the envelope's ramp directly, and it said the envelope had been
+// ramping all along, so the logic was never at fault.  A carrier ladder from
+// 195 kHz down to 100 Hz changed nothing either, which cleared the rate.  A
+// single steady six per cent duty on the spare lane then settled the other
+// half: it reads clearly dim beside the full-brightness lanes, so these LEDs do
+// display a duty as brightness.
+//
+// What the envelope was missing was time.  A brightness change has to outlast
+// the eye's integration window to be seen as a change at all, and the first
+// version decayed over 64 ms, inside a single 107 ms sound.  Four correct lanes
+// therefore read as nothing but on and off.  Both the carrier and the decay are
+// slow now.
+//
+// One beat is one second -- 60 a minute, the ordinary resting rate.  S1 begins
+// at the beat and lasts about 300 ms, S2 begins at 400 ms and lasts about
+// 145 ms, and the rest of the second is dark.  The absolute durations are the
+// ordinary adult ones where they can be; the decay is stretched past them on
+// purpose, because a faithful one cannot be seen.
 module heartbeat #(
     parameter integer TICK_DIV = 50_000,   // this clock's cycles per millisecond
-    parameter integer TICKS    = 1000      // milliseconds in one beat
+    parameter integer TICKS    = 1000,     // milliseconds in one beat
+    parameter integer CARRIER_DIV = 1      // clocks per carrier step; see above
 ) (
     input  wire clk,
-    output wire led
+    output wire led,
+    output wire [7:0] env_out   // the envelope, for diagnostics
 );
-    localparam [9:0] S2_ONSET = 10'd332;   // S2 begins, ms into the beat
+    localparam [9:0] S2_ONSET = 10'd400;   // S2 begins, ms into the beat
 
     // Ramp steps per millisecond and the peak each sound rises to.  S1 reaches
-    // full brightness in 43 ms and decays over 64; S2 rises to 150 of 255 in
-    // 30 ms and decays over 37.  Fast up and slow down, which is what a pulse
-    // both sounds and looks like.
-    localparam [7:0] S1_PEAK = 8'd255, S2_PEAK = 8'd150;
-    localparam [7:0] S1_RISE = 8'd6,   S2_RISE = 8'd5, FALL = 8'd4;
+    // full brightness in 43 ms and fades over 255; S2 rises to 120 of 255 in
+    // 24 ms and fades over 120.  Fast up and slow down, which is what a pulse
+    // both sounds and looks like -- and the slow part is what makes the
+    // brightness legible rather than merely correct.
+    localparam [7:0] S1_PEAK = 8'd255, S2_PEAK = 8'd120;
+    localparam [7:0] S1_RISE = 8'd6,   S2_RISE = 8'd5, FALL = 8'd1;
 
     localparam [2:0] ST_WAIT1 = 3'd0, ST_UP1 = 3'd1, ST_DN1 = 3'd2,
                      ST_WAIT2 = 3'd3, ST_UP2 = 3'd4, ST_DN2 = 3'd5;
@@ -622,13 +668,40 @@ module heartbeat #(
     reg [9:0]  phase;      // 0..TICKS-1, milliseconds into the beat
     reg [17:0] tick;       // this clock's cycles within the current millisecond
     reg [7:0]  env;        // the envelope, and so the brightness
-    reg [7:0]  pwm;        // the PWM carrier
+    reg [7:0]  pwm;        // the carrier counter, 0..255
+    reg [15:0] cdiv;       // carrier prescaler: clocks between carrier steps
+
+    // This design has no reset: every flop here powers up at zero and the
+    // waveform depends on that.  `st` is the one register where the value it
+    // powers up at is load bearing -- zero is ST_WAIT1, the state the beat
+    // starts from -- so the encoding must stay binary and 0 must keep meaning
+    // ST_WAIT1.
+    //
+    // Left to itself yosys's FSM pass re-encodes this register ONE-HOT, six
+    // state bits for six states, and the transition table it builds has no row
+    // for the all-zero code.  On silicon that is fatal: Gowin flops power up at
+    // zero, so `st` comes up as six zeros, which is not a valid one-hot code,
+    // and nothing moves it.  The FSM is a trap, `env` never leaves 0, the
+    // PWM comparison is never true and every lane stays dark -- which is
+    // exactly what the first board test of this module showed.  A simulation
+    // cannot see it, because iverilog keeps the binary encoding and the
+    // testbench forces the power-up state, which in binary is valid.
+    //
+    // `fsm_encoding = "none"` keeps the register as written, so all eight codes
+    // are real and the power-up value is the state the beat is supposed to
+    // start in.  A real reset would be the sturdier fix and is the right thing
+    // if this instrument grows past bring-up; while it has none, this is what
+    // makes the no-reset convention safe.
+    (* fsm_encoding = "none" *)
     reg [2:0]  st;
 
     wire tick_now = (tick == TICK_DIV - 1);
 
+    wire pwm_step = (cdiv == CARRIER_DIV - 1);
+
     always @(posedge clk) begin
-        pwm <= pwm + 8'd1;
+        cdiv <= pwm_step ? 16'd0 : cdiv + 16'd1;
+        if (pwm_step) pwm <= pwm + 8'd1;
         if (tick_now) begin
             tick  <= 18'd0;
             phase <= (phase == TICKS - 1) ? 10'd0 : phase + 10'd1;
@@ -659,7 +732,8 @@ module heartbeat #(
         end
     end
 
-    assign led = (pwm < env);
+    assign led     = (pwm < env);
+    assign env_out = env;
 endmodule
 
 `default_nettype wire

@@ -1,0 +1,118 @@
+# clock-smoke: making the heartbeat visible
+
+Status: **delivered and accepted on the board.**  Artifact
+`/home/vash/tools/clock-smoke/clock-smoke.fs`, sha256
+`f46456056d5a5c31df0d05d4a7bdb392cc3df897fd0b63da15b6ff558df46706`.
+
+This supersedes `evidence/clock-smoke-heartbeat.txt`, which describes the first
+heartbeat build: its envelope is still correct, but that build never ran the
+brain of it (see below) and its brightness was illegible (also below).
+
+## 1. The first board test was dark, and the reason was one-hot
+
+Four lanes, all dark, while the three lock lanes were lit.  The design was right:
+the RTL simulates correctly, the netlist wires the comparator from `env` and
+`pwm` to the pin, and the bitstream is byte-reproducible with a silent packer.
+
+`yosys`'s FSM pass had re-encoded the state register (`st`) from three bits to
+**one-hot, six state bits for six states**:
+
+```
+2.13.6. Executing FSM_RECODE pass (re-assigning FSM state encoding).
+Recoding FSM `$fsm$\hb_sys.st$3827' ... using `auto' encoding:
+  mapping auto encoding to `one-hot' for this FSM.
+```
+
+and the transition table it built has rows only for states 0..5.  Gowin flops
+power up at **zero**, so on silicon `st` came up `6'b000000` -- not a valid
+one-hot code, with no transition defined out of it and no reset.  The FSM is a
+trap: `env` never leaves 0, the LED comparison is never true, and all four lanes
+sit dark.  Uniform darkness across four different clocks is the signature of a
+fault common to all four instances, which is what pointed at the encoding rather
+than at any clock.
+
+Evaluating the routed netlist's next-state logic with every flop at its power-up
+value confirmed it before any board time was spent on a fix:
+
+```
+hb_sys: 6 state flops, all 0 at configuration -> ALL ZERO - TRAPPED
+hb_27 : 6 state flops, all 0 at configuration -> ALL ZERO - TRAPPED
+hb_hclk: 6 state flops, all 0 at configuration -> ALL ZERO - TRAPPED
+hb_nes: 6 state flops, all 0 at configuration -> ALL ZERO - TRAPPED
+4 of 4 FSMs are trapped in the all-zero state.
+```
+
+**The fix is one attribute**, `(* fsm_encoding = "none" *)` on `st`: the register
+stays binary, and its power-up value 0 *is* `ST_WAIT1`, the state the beat starts
+from.  After it the FSM pass extracts nothing, the netlist holds 3 state flops,
+and the same evaluation reports every FSM leaving the all-zero state.  On the
+board the beat appeared.
+
+The lesson generalises past this design: **any reset-less `case` FSM in this flow
+on this device is re-encoded one-hot and is then dead in the bitstream,
+silently, with a clean timing report.**  A simulation cannot show it, because
+iverilog keeps the binary encoding and the testbench forces the power-up state,
+which in binary is valid.
+
+## 2. Then the brightness, which took five board tests
+
+Two symptoms, and they were not the same fault.
+
+**The `bum bum` pattern was right and the brightness never moved.**  Four
+hypotheses were tested and three died:
+
+1. *The magnitude comparison is mis-encoded by the packer.*  Not ruled out
+   directly, but it stopped being the leading candidate once a second, entirely
+   different modulator -- an eight-bit accumulator whose carry drives the LED,
+   adder-only, the same structure as the working counters -- looked exactly the
+   same.
+2. *The LED path cannot follow a fast carrier.*  **Refuted.**  A carrier ladder
+   across the four lanes, a decade apart and 2000x in total -- 195 kHz, 9.6 kHz,
+   1.0 kHz, 100 Hz -- changed nothing.
+3. *The envelope is not ramping in the bitstream.*  **Refuted, and this is the
+   one that closed the question.**  The message's `s=` field was a sanity bit for
+   the 50 MHz input, stuck at 0 ever since `cnt_sys` came back as 24 flops instead
+   of 25; it now reports the largest envelope value seen below the top of the
+   ramp.  A ramping envelope must pass through 246 and read `f`.  It reads `f`.
+   The design was right the whole time.
+4. *The LEDs cannot show a duty as brightness.*  **Refuted** by putting a
+   *steady* six per cent duty at 200 Hz on the spare lane: it reads clearly dim
+   beside the full-brightness lock lanes.
+
+What was actually missing was **time**.  A brightness change has to outlast the
+eye's integration window to be seen as a change at all, and the envelope decayed
+over 64 ms inside a single 107 ms sound.  Four correct lanes therefore read as
+nothing but on and off, and no carrier rate could have fixed that -- which is
+exactly why the ladder changed nothing.
+
+One probe is worth recording as a mistake to avoid: a 1 Hz carrier at 6 % duty
+was read as proof that the LED displays duty.  It was not.  It is on for 62 ms
+once a second, which is a *timing* statement -- "the LED can be on briefly" --
+not a brightness one.  The steady-dim probe the next cycle used is the one that
+answers the brightness question.
+
+## 3. What is delivered
+
+One beat per second, 60 a minute, four lanes, each clocked by its own clock:
+
+```
+S1   onset 2 ms,  peak 255,  ends 300 ms   width 298 ms    attack 43 ms, fade 255 ms
+S2   onset 402 ms, peak 120, ends 546 ms   width 144 ms    attack  24 ms, fade 120 ms
+diastole 454 ms
+```
+
+A fast attack and a deliberately slow decay: the snap is what a pulse sounds
+like, and the quarter-second fade is what makes the brightness legible.  S2 peaks
+at 120 of 255 so it reads as the quieter of the two.  The carrier is about 200 Hz
+on every lane -- the rate the steady-dim probe proved these LEDs render -- held
+by `CARRIER_DIV`, one value per lane, so the carrier is that clock over
+`256 * CARRIER_DIV`.
+
+`tools/test-heartbeat-waveform.sh` asserts all of the above from a simulation of
+the `heartbeat` module alone, and fails if any figure moves.  The testbench must
+name every register the design relies on powering up at zero; missing one leaves
+it at `x` and the LED reads dead, which happened once during this work.
+
+Two things stay open and neither is a defect in the panel: `hclk`'s UART counter
+reads `hk=0000` in some placements, the placement-dependent anomaly already
+recorded in the log; and the cascade order the user sees is still unmeasured.

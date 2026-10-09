@@ -17,9 +17,12 @@
 # Since the design's tick IS a millisecond, ticks scale straight to milliseconds
 # and the assertions below are the real design's timings.
 #
-# The figures asserted are the ordinary adult cardiac ones the design targets:
-# S1 ~105 ms at the beat, S2 ~67 ms starting at 332 ms, ~0.6 s of diastole, and
-# one beat per second, which is 60 beats a minute.
+# The figures asserted are the shape the design targets: a fast attack and a
+# deliberately slow decay.  S1 snaps to full in 43 ms and fades over 255, so the
+# sound lasts ~298 ms from the beat; S2 is the quieter one, rising to 120 of 255
+# in 24 ms and fading over 120, beginning at 402 ms.  About 450 ms of the second
+# is dark.  The decay is the long part on purpose -- it is what makes the
+# brightness legible -- so a shorter one is a regression, not a tightening.
 #
 # SPDX-License-Identifier: MIT
 set -euo pipefail
@@ -55,7 +58,11 @@ module heartbeat_tb;
     integer s1_peak = 0, s2_peak = 0;
 
     initial begin
-        dut.phase = 0; dut.tick = 0; dut.env = 0; dut.pwm = 0; dut.st = 0;
+        // Every register the design relies on powering up at zero has to be
+        // named here.  Miss one and it sits at x, which is how the brightness
+        // accumulator first went missing: `if (led)` was false for x on every
+        // sample.  This list has to move with the design.
+        dut.phase = 0; dut.tick = 0; dut.env = 0; dut.pwm = 0; dut.st = 0; dut.cdiv = 0;
         for (t = 0; t < 1050; t = t + 1) begin
             duty = 0;
             repeat (1000) begin                             // one tick
@@ -95,13 +102,13 @@ read -r _ s2_on s2_off s2_w s2_p <<<"$S2"
 
 echo
 echo "one beat of the heartbeat module, in ticks (one tick = one millisecond):"
-check "S1 width, ms"                107 "$s1_w"
+check "S1 width, ms"                298 "$s1_w"
 check "S1 peak brightness of 255"   255 "$s1_p"
-check "S2 onset, ms"                334 "$s2_on"
-check "S2 width, ms"                 68 "$s2_w"
-check "S2 peak brightness of 255"   150 "$s2_p"
-check "S1 onset to S2 onset, ms"    332 "$((s2_on - s1_on))"
-check "diastole after S2, ms"       598 "$((1000 - s2_off))"
+check "S2 onset, ms"                402 "$s2_on"
+check "S2 width, ms"                144 "$s2_w"
+check "S2 peak brightness of 255"   120 "$s2_p"
+check "S1 onset to S2 onset, ms"    400 "$((s2_on - s1_on))"
+check "diastole after S2, ms"       454 "$((1000 - s2_off))"
 
 # Brightness linearity: for each sampled env, duty/1000 should be env/256.
 worst=0
@@ -115,4 +122,4 @@ echo "  ok   brightness tracks the envelope, worst error ${worst}/256"
 
 echo
 if (( fail )); then echo "HEARTBEAT WAVEFORM: FAIL"; exit 1; fi
-echo "HEARTBEAT WAVEFORM: PASS -- 60 bpm, S1 107 ms, S2 68 ms at 332 ms"
+echo "HEARTBEAT WAVEFORM: PASS -- 60 bpm, S1 298 ms, S2 144 ms at 402 ms"

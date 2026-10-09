@@ -1,5 +1,11 @@
 # clock-smoke: the heartbeat panel
 
+> Superseded by `evidence/clock-smoke-heartbeat-visible.txt`.  Everything below
+> is the first heartbeat build: the envelope and the cardiac figures are still
+> the design's, but that build never ran its FSM (a one-hot re-encoding, fixed
+> with one attribute) and its brightness was illegible (a 64 ms decay, too quick
+> for the eye).  Read the newer file for what shipped.
+
 Status: **built and verified in simulation; not yet deployed.**  The board was
 running the previous build when this was written.
 
