@@ -1,0 +1,125 @@
+# clock-smoke: the heartbeat panel
+
+Status: **built and verified in simulation; not yet deployed.**  The board was
+running the previous build when this was written.
+
+Source: `fpga/clock-smoke/clock_smoke.v`, `tools/test-heartbeat-waveform.sh`.
+Build product: `/home/vash/tools/clock-smoke/clock-smoke.fs`, sha256
+`ea4a9b9fa54417b1f27b4601b32f86bcb5988816f6c4093c9bbf1093ff85aa3c`,
+34,668,145 bytes.
+
+## What it is
+
+The four lanes that were blinks become pulses shaped like a human heartbeat, one
+beat per second, so that 60 beats a minute — the ordinary resting adult rate.
+The four clocks each drive their own heart:
+
+```
+LED 1  sys_clk  50.000 MHz   heartbeat #(.TICK_DIV(50_000), .TICKS(1000))
+LED 2  clk27    27.000 MHz   heartbeat #(.TICK_DIV(27_000), .TICKS(1000))
+LED 3  hclk     74.250 MHz   heartbeat #(.TICK_DIV(74_250), .TICKS(1000))
+LED 4  clk_nes  21.505 MHz   heartbeat #(.TICK_DIV(21_505), .TICKS(1000))
+```
+
+The tick is the unit that makes this work: `TICK_DIV` is *that clock's cycles in
+one millisecond*, so a tick is a millisecond regardless of which clock counts it,
+and `TICKS = 1000` makes a beat one second.  Nothing divides one clock by
+another, so no lane depends on another lane's clock and no lane depends on the
+50 MHz reference.
+
+This is the first build in which `pll_27.ODIV0_SEL` is back at **50**, its
+nominal operating point.  The earlier builds carried 100 as the sweep's step 1;
+with the field measured to be a straight divisor, 100 halves that output, so this
+restores `clk27` and `hclk` to their nominal rates and lets all four hearts beat
+together.
+
+## The shape
+
+Two sounds per beat, each a fast attack and a slow decay, quiet-then-loud —
+"bum, bum", the second quieter, which is what a heart sounds like through a
+stethoscope.  Brightness is the envelope carried on PWM: `pwm` free-runs through
+256 values in the lane's own clock and the LED is high while `pwm < env`, so the
+average brightness is `env/256`.  The carrier is that clock over 256 — 84 kHz to
+290 kHz across the four lanes, far above anything an eye resolves.
+
+## Verified: the waveform, in simulation
+
+`tools/test-heartbeat-waveform.sh` extracts the `heartbeat` module from the
+design and simulates one beat of it.  The full design cannot be simulated — `PLL`
+and `CLKDIV` are Gowin primitives with no model here.  The testbench runs at
+`TICK_DIV = 1000` instead of the design's 21,505–74,250, because 50 million
+clocks a beat is wasteful to simulate and because a 1000-clock tick is the
+smallest one that still contains the 256-clock PWM carrier, so brightness stays
+measurable.  Every figure the module reports is in *ticks*, and a tick is a
+millisecond by construction, so ticks scale straight to milliseconds and the
+simulated timing is the design's timing.
+
+```
+one beat, in milliseconds:
+  S1 onset to end            2 .. 109     width 107   peak brightness 255
+  S1 onset to S2 onset       332
+  S2 onset to end            334 .. 402   width  68   peak brightness 150
+  diastole after S2          598
+  beat                       1000          (~60 bpm)
+  brightness vs envelope     worst error 6 of 256
+```
+
+Those are the ordinary adult figures the design targets: S1 about 105 ms, S2
+about 67 ms starting 332 ms into the cycle, and 0.6 s of diastole.  The test
+asserts them and exits non-zero if any is wrong, so a later edit to the waveform
+is caught.
+
+## Two things the simulation taught
+
+**Nothing in `clock_smoke.v` has a reset, and that is load bearing.**  The design
+relies on Gowin flops powering up at zero, which is true on silicon and which
+every build so far has depended on.  It is not true in a simulator, which starts
+at `x`; the waveform generator sat at `x` forever until the testbench forced the
+state a real device begins in.  Fine as bring-up practice, but a real reset is
+warranted if this instrument grows.
+
+**The PWM carrier has to be far shorter than the tick.**  At a first attempt the
+simulation's tick was small enough that the 256-clock carrier outran it and
+brightness aliased back and forth.  In the real design the margin is 84x to 290x
+and the carrier fits inside a single tick with room to spare, but the constraint
+is real and worth stating: the carrier must complete many times per tick for the
+average to be the envelope.
+
+## Build result
+
+Same flow, same tools as every build since entry 7:
+
+```
+yosys -> nextpnr-himbaechel -> gowin_pack
+```
+
+Post-route maximum frequency, against the constraint each clock carries:
+
+```
+clk27        202.51 MHz   PASS at 27.00 MHz
+hclk         189.50 MHz   PASS at 74.25 MHz
+clk_nes      167.50 MHz   PASS at 21.50 MHz
+sys domain   181.88 MHz   PASS
+```
+
+No timing failures.  The dedicated-router warnings are the usual fallback: 75
+attempts on `clk27`, 74 on `clk_nes`, 1 on `hclk5`, all of which fabric-route
+instead.  With every lane at 74 MHz or below, timing passes with the margins
+above regardless of which route a net took.
+
+One constraint caveat: the `create_clock` lines for `sys_clk` and `hclk5` in
+`clock_smoke.sdc` do not appear to bind — the report names the `sys_clk` domain
+`hb_sys.clk` and constrains it at nextpnr's 12 MHz default rather than the 20 ns
+the SDC asks for.  It changes no conclusion here, because the domain's maximum
+frequency is 181.88 MHz and so passes 50 MHz too, but the SDC is not fully
+effective and that is worth knowing before trusting a marginal number from it.
+
+## The previous build, watched for fifteen minutes
+
+The bitstream deployed before this one is the sweep's step 1, `57dcef1c…`,
+which is what entry 31 recorded at three minutes.  The user watched it for
+fifteen minutes and reports all four lanes still locked and in phase.  That is
+the datum that matters for the earlier drift: on the build before the modulus fix
+a quarter-per-thousand error showed a beat within a couple of minutes, so fifteen
+minutes with no drift is a strong negative and closes the drift question for the
+1 Hz heartbeats.

@@ -147,15 +147,14 @@ module clock_smoke (
     defparam pll_27.FBDIV_SEL = 1;
     defparam pll_27.MDIV_SEL = 27;
     defparam pll_27.MDIV_FRAC_SEL = 0;
-    // SWEEP STEP 1.  ODIV0_SEL is the field whose interpretation was wrong for
-    // five core-log entries: with the decoder's 2x factor removed the recorded
-    // variant-B runs say it is a STRAIGHT DIVISOR, so 100 must halve this
-    // output to 13.5 MHz and carry hclk5 down with it to 185.625.  If clk27
-    // measures 0.2700 x sys_clk instead of 0.5400, the divisor reading is
-    // confirmed on silicon and the desktop core's ODIV0_SEL = 100 is the 2x
-    // error entry 30 says it is.  If it stays at 0.5400, that value is special
-    // and the old halving reading was right after all.
-    defparam pll_27.ODIV0_SEL = 100;
+    // SWEEP STEP 1 IS DONE and recorded in evidence/clock-smoke-sweep.txt: at
+    // ODIV0_SEL = 100 this output measured 0.2700 x sys_clk against 0.5400, so
+    // the field is a straight divisor, and the desktop core's ODIV0_SEL = 100 is
+    // the two-times error entry 30 describes.  Back to 50 here, the value the
+    // design asks for, so that all four clocks sit at their nominal rates and
+    // the four heartbeats agree -- the point of this build is the shape, and four
+    // lanes at four different rates would not show it.
+    defparam pll_27.ODIV0_SEL = 50;
     defparam pll_27.CLKOUT0_EN = "TRUE";
     defparam pll_27.CLKFB_SEL = "INTERNAL";
 
@@ -523,11 +522,12 @@ module clock_smoke (
     // that sys_clk is alive, which is why every heartbeat below sits in its own
     // domain.
     //
-    // Each modulus is that clock's cycles in HALF A SECOND at its NOMINAL
-    // frequency, so each lane blinks at exactly 1 Hz when its clock is right.
-    // The modulus is a test and not a convenience: a clock running at twice its
-    // nominal rate blinks at 2 Hz, which is how the recorded ODIV0 halving would
-    // show up as a light rather than as a UART field.
+    // Each lane's light is a HEARTBEAT, and the beat is one second at that
+    // clock's nominal rate -- 60 a minute, the ordinary adult resting figure --
+    // so the four lanes beat together when the four clocks are at their nominal
+    // rates and a clock that is wrong beats at the wrong rate.  The shape is the
+    // two sounds a stethoscope hears, with PWM brightness for the envelope; the
+    // `heartbeat` module at the end of this file holds the waveform.
     //
     // All the clocks in this design are exact rational multiples of the one
     // 50 MHz crystal -- a PLL's output is an integer ratio of its own reference
@@ -546,45 +546,17 @@ module clock_smoke (
     // lights on HIGH, so ANY dark lane is a fault -- a clock that stopped or a
     // PLL that did not lock -- and which it is, is read from the lane's position.
     //
-    // The modulus counters cannot be trimmed the way the raw-tap versions could:
-    // every bit of each one feeds a comparison, so no bit index is implicit.
-    localparam integer DIV_SYS   = 25_000_000;   // 50.00 MHz x 0.5 s
-    localparam integer DIV_CLK27 = 13_500_000;   // 27.00 MHz x 0.5 s
-    localparam integer DIV_HCLK  = 37_125_000;   // 74.25 MHz x 0.5 s
-    // pll_nes cannot make a round 21.5 MHz: its VCO is 2000 MHz and its divider
-    // is 93, so it produces 2000/93 = 21.505376 MHz.  This modulus is half a
-    // second at THAT value, not at 21.5.  The first version used 21.5 and the
-    // lane drifted 249 ppm against the other three -- one slip every 67 minutes,
-    // which the user saw by eye and the UART then measured to 0.2%.  A modulus
-    // taken from a requested frequency rather than an achievable one is a
-    // deliberate drift, and it belongs in a test, not in a default.
-    localparam integer DIV_NES   = 10_752_688;   // 21.505376 MHz x 0.5 s
+    // The tick divisor is that clock's cycles per MILLISECOND, so every
+    // boundary inside the heartbeat module is a count of milliseconds and the
+    // waveform is the same in time on all four lanes.  Three of the four
+    // divisors are exact; pll_nes's is 21,505.376 rounded down, a 17 ppm error,
+    // which is one beat of slip in about sixteen hours.
+    wire led_sys, led_27, led_hclk, led_nes;
 
-    reg [24:0] hb_sys;
-    reg [23:0] hb_27;
-    reg [25:0] hb_hclk;
-    reg [23:0] hb_nes;
-    reg        led_sys, led_27, led_hclk, led_nes;
-
-    always @(posedge sys_clk) begin
-        if (hb_sys == DIV_SYS - 1) begin hb_sys <= 25'd0; led_sys <= ~led_sys; end
-        else                             hb_sys <= hb_sys + 25'd1;
-    end
-
-    always @(posedge clk27) begin
-        if (hb_27 == DIV_CLK27 - 1) begin hb_27 <= 24'd0; led_27 <= ~led_27; end
-        else                            hb_27 <= hb_27 + 24'd1;
-    end
-
-    always @(posedge hclk) begin
-        if (hb_hclk == DIV_HCLK - 1) begin hb_hclk <= 26'd0; led_hclk <= ~led_hclk; end
-        else                              hb_hclk <= hb_hclk + 26'd1;
-    end
-
-    always @(posedge clk_nes) begin
-        if (hb_nes == DIV_NES - 1) begin hb_nes <= 24'd0; led_nes <= ~led_nes; end
-        else                           hb_nes <= hb_nes + 24'd1;
-    end
+    heartbeat #(.TICK_DIV(50_000), .TICKS(1000)) hb_sys  (.clk(sys_clk), .led(led_sys));
+    heartbeat #(.TICK_DIV(27_000), .TICKS(1000)) hb_27   (.clk(clk27),   .led(led_27));
+    heartbeat #(.TICK_DIV(74_250), .TICKS(1000)) hb_hclk (.clk(hclk),    .led(led_hclk));
+    heartbeat #(.TICK_DIV(21_505), .TICKS(1000)) hb_nes  (.clk(clk_nes), .led(led_nes));
 
     // Module lane n is module pin (1, 2, 3, 4, 7, 8, 9, 10)[n], and the dock
     // interleaves those onto IO0/2/4/6 for lanes 0-3 and IO1/3/5/7 for lanes
@@ -598,6 +570,96 @@ module clock_smoke (
     assign pmod1_io3 = lock_hdmi;    // LED 6 <- pll_hdmi  LOCK, steady
     assign pmod1_io5 = lock_nes;     // LED 7 <- pll_nes   LOCK, steady
     assign pmod1_io7 = 1'b1;         // LED 8   spare
+endmodule
+
+
+// ------------------------------------------------------------------ heartbeat
+//
+// One beat of a normal cardiac cycle, as a brightness envelope on one LED, and
+// CLOCKED BY THE CLOCK WHOSE LANE IT DRIVES.  That is the whole reason this is a
+// module rather than a 1 Hz square wave driven from sys_clk: a lane that is not
+// clocked by its own clock stops being a witness to that clock, and every
+// reading this panel has produced rests on that property.
+//
+// The waveform is S1 and S2, the two sounds a stethoscope hears.  Each is a fast
+// attack and a slower decay and S2 is quieter than S1, which is what makes the
+// pair read as "lub ... dub ... " rather than as two equal blinks.  A long pause
+// follows, the diastole.
+//
+// One beat is one second at the clock's nominal rate -- 60 a minute -- so every
+// boundary below is a count of MILLISECONDS: TICKS is 1000, TICK_DIV is that
+// clock's cycles per millisecond, and the tick counter is the only place the
+// clock's frequency enters.  A clock at the wrong rate beats at the wrong rate,
+// which is what the square-wave version told us, now with a shape.
+//
+// Brightness is the envelope carried by PWM: `pwm` free-runs through 256 values
+// in this clock and the lane is HIGH while it is below `env`, so the LED's
+// average is env/256.  The carrier is that clock over 256 -- 84 to 290 kHz
+// across the four clocks here, far above anything an eye resolves, and low
+// enough that the LED has no trouble following it.
+//
+// The figures are the ordinary adult ones: S1 about 105 ms wide and beginning at
+// the beat, S2 about 67 ms wide beginning at 332 ms, the remaining 0.6 s dark.
+module heartbeat #(
+    parameter integer TICK_DIV = 50_000,   // this clock's cycles per millisecond
+    parameter integer TICKS    = 1000      // milliseconds in one beat
+) (
+    input  wire clk,
+    output wire led
+);
+    localparam [9:0] S2_ONSET = 10'd332;   // S2 begins, ms into the beat
+
+    // Ramp steps per millisecond and the peak each sound rises to.  S1 reaches
+    // full brightness in 43 ms and decays over 64; S2 rises to 150 of 255 in
+    // 30 ms and decays over 37.  Fast up and slow down, which is what a pulse
+    // both sounds and looks like.
+    localparam [7:0] S1_PEAK = 8'd255, S2_PEAK = 8'd150;
+    localparam [7:0] S1_RISE = 8'd6,   S2_RISE = 8'd5, FALL = 8'd4;
+
+    localparam [2:0] ST_WAIT1 = 3'd0, ST_UP1 = 3'd1, ST_DN1 = 3'd2,
+                     ST_WAIT2 = 3'd3, ST_UP2 = 3'd4, ST_DN2 = 3'd5;
+
+    reg [9:0]  phase;      // 0..TICKS-1, milliseconds into the beat
+    reg [17:0] tick;       // this clock's cycles within the current millisecond
+    reg [7:0]  env;        // the envelope, and so the brightness
+    reg [7:0]  pwm;        // the PWM carrier
+    reg [2:0]  st;
+
+    wire tick_now = (tick == TICK_DIV - 1);
+
+    always @(posedge clk) begin
+        pwm <= pwm + 8'd1;
+        if (tick_now) begin
+            tick  <= 18'd0;
+            phase <= (phase == TICKS - 1) ? 10'd0 : phase + 10'd1;
+        end else begin
+            tick <= tick + 18'd1;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (tick_now) begin
+            case (st)
+                ST_WAIT1: if (phase == 10'd0)    st <= ST_UP1;
+                ST_UP1:   if (env >= S1_PEAK)    st <= ST_DN1;
+                ST_DN1:   if (env == 8'd0)       st <= ST_WAIT2;
+                ST_WAIT2: if (phase >= S2_ONSET) st <= ST_UP2;
+                ST_UP2:   if (env >= S2_PEAK)    st <= ST_DN2;
+                ST_DN2:   if (env == 8'd0)       st <= ST_WAIT1;
+                default:                         st <= ST_WAIT1;
+            endcase
+
+            case (st)
+                ST_UP1: env <= (env > S1_PEAK - S1_RISE) ? S1_PEAK : env + S1_RISE;
+                ST_DN1: env <= (env < FALL)              ? 8'd0    : env - FALL;
+                ST_UP2: env <= (env > S2_PEAK - S2_RISE) ? S2_PEAK : env + S2_RISE;
+                ST_DN2: env <= (env < FALL)              ? 8'd0    : env - FALL;
+                default: env <= 8'd0;
+            endcase
+        end
+    end
+
+    assign led = (pwm < env);
 endmodule
 
 `default_nettype wire
