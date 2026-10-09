@@ -1086,3 +1086,36 @@ Two branches remain and the first is now the more valuable. Put the validated cl
 - User Test: FAIL
 
 ---
+
+## 36 COMMIT Unreleased 2026-10-09T12:38:47-07:00
+
+#### Coming From:
+
+Unreleased b2b8346
+
+#### Purpose:
+
+Stop inferring what the HDMI output is and measure it, using a receiver.
+
+#### Outcome:
+
+The HDMI output is not dead, and that premise was wrong. The user's idea was a capture card on the Tang's output, and a capture card is a TMDS receiver: it will happily hand over the pixels, which makes it the first instrument here that can say what the output IS rather than whether a screen lit up. Fifteen seconds of raw YUYV capture, and a separate sixty-frame run, both returned the same shape: 36 frames of legal video black, 863 frames of the card's own logo, one torn frame. Legal black means luma 16 throughout, which is what a conformant source puts in active pixels, so the Tang is emitting a valid TMDS signal that a receiver locks onto and decodes -- carrying black -- and then, after about 0.6 s, the link drops and does not come back until the capture is reopened. Two kinds of frame had to be told apart to read that, and the first attempt got it wrong: a frame at luma 16 everywhere is the source's video black, while a frame with a background of luma 0 and bright text on it is the CARD's logo, drawn when its link is buggy or not synced -- legal video never has 0 in the active pixels. The card's logo was briefly read here as the Tang displaying text; the user identified it, and `tools/hdmi-frames.py` now classifies frames so the distinction is mechanical rather than a judgement. The consequence is that the monitor was never the problem either: its flash and then loss is the same six tenths of a second of lock seen from a second receiver, which retracts this project's own earlier reading that the load-time flash was the monitor reacting to configuration and carried no information. Both receivers agree, and what they agree about is signal integrity rather than absence of signal. The router's own report says where: of 947 dedicated-routing failures, 943 are on `clk`, which is the ~21.5 MHz NES clock and is fine on fabric -- the keylink answering steadily for as long as it has been watched proves that -- while 3 are on `hclk5`, the 371.25 MHz TMDS bit clock, whose segments are therefore on general fabric rather than the dedicated clock network. At 371 MHz that is jitter, and jitter is what makes a receiver lock and then fall out, which is exactly what both receivers do. That is the defect the project already named -- the route carrying the TMDS bit clock to the serialisers -- now measured from the receiving end instead of inferred from fuses. Three tools are added so none of it has to be re-derived: `tools/capture-hdmi.sh` frames the capture, and `tools/hdmi-frames.py` and `tools/hdmi-render.py` read the result, the latter because this agent cannot view images and a frame has to be turned back into characters to be seen at all. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 36 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Compare how the VENDOR's bitstream routes `hclk5` against ours. That build works on this board, so whatever it does with that net that ours does not is the answer, and it is a comparison rather than a hunt: the project already carries `hclk-state.py` and `dump-routing.py` for reading HCLK state out of an unpacked bitstream, and both bitstreams are on disk. Anything that gives the bit clock a dedicated route -- a different placement for the CLKDIV relative to the PLL site, a different HCLK pipe, or the clock network itself -- is then testable offline before it costs a board cycle. The clock-liveness panel planned as the previous cycle's next step is now DEPRIORITISED and should stay that way: it answers whether the clocks run, and the receiver has already proved they do, since a link that locks is a link with a clock. What is missing is the quality of that clock's route, which no readout on the board would have shown. The desktop patch consolidation recorded in `evidence/desktop-display-cycle.txt` section 7 remains deliberately deferred at the user's direction. Keep the two frame kinds in mind before concluding anything from a capture, keep the power-cycle rule on every load, and do not re-test the lane selection or the 2x clock defect, both retired in entry 35.
+
+#### Files Modified:
+
+- tools/capture-hdmi.sh
+- tools/hdmi-frames.py
+- tools/hdmi-render.py
+- evidence/hdmi-capture-card.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

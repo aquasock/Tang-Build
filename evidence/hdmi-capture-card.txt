@@ -1,0 +1,85 @@
+# The HDMI output, measured with a receiver
+
+The capture card is the first instrument in this project that can say what the
+Tang's HDMI *is*, rather than whether a screen lit up.  It changed the question.
+
+## The instrument
+
+A MACROSILICON USB3 video capture card (`345f:2133`) on the Tang's HDMI output,
+appearing as `/dev/video0` (capture) and `/dev/video1` (metadata).  It offers
+YUYV, MJPEG, BGR24 and NV12 up to 4K.  Raw YUYV is the useful one, because the
+point is to read levels and a compressed frame would not have them.
+
+The tools, all in `tools/`:
+
+```
+tools/capture-hdmi.sh <out.yuv> [frames] [device] [WxH]
+tools/hdmi-frames.py <raw.yuv> [W] [H]        # how many frames, of what kind
+tools/hdmi-render.py <raw.yuv> <frame> [W] [H] ramp cols rows
+tools/hdmi-render.py <raw.yuv> <frame> [W] [H] zoom x0 y0 x1 y1 [step]
+```
+
+## The measurement
+
+Fifteen seconds of capture, and a separate sixty-frame run, both returned the
+same shape:
+
+```
+legal black (the Tang's own video)      36 frames   about 0.6 s
+the capture card's own logo            863 frames   link not synced
+one torn frame                           1 frame
+```
+
+**The Tang's HDMI is not dead.**  It emits a valid TMDS signal that a receiver
+locks onto and decodes, carrying legal digital black -- luma 16 throughout, which
+is what a conformant source puts in active pixels.  Then, after about 0.6 s, the
+link drops and does not come back until the capture is reopened.
+
+## Two kinds of frame, and why telling them apart mattered
+
+A frame at luma 16 everywhere is the *source's* video black.  A frame whose
+background is luma **0** with bright text on it is the *card's* logo: legal video
+never has 0 in the active pixels.  The first capture in this session was mostly
+the second kind, and it was briefly read as the Tang displaying text.  The user
+identified the logo; the luma-0 background is the tell, and `tools/hdmi-frames.py`
+now checks it and says which kind a frame is.
+
+## What it means
+
+**The premise was wrong.**  "Its HDMI output produces no signal" has been the
+project's description of this fault since the beginning, and it is not what is
+happening: the output produces a signal a receiver accepts, and the *link* then
+fails.  The fault is signal integrity, not absence.
+
+**And the monitor was never the problem.**  The monitor's "flash, then no signal,
+then sleep" is the same 0.6 s of lock seen from a second receiver.  A transient
+flash at load time was earlier dismissed here as the monitor reacting to
+configuration; measured, it is the signal itself, and the two receivers agree.
+
+## Why the link drops, from the router's own report
+
+This build's dedicated-routing failures, out of 947:
+
+```
+943  Failed to route net 'clk'      the ~21.5 MHz NES clock
+  3  Failed to route net 'hclk5'     the 371.25 MHz TMDS bit clock
+  1  Failed to route net 'clk27'
+```
+
+`clk` at 21.5 MHz is fine on fabric, and the keylink answering steadily for as
+long as it has been watched proves it.  `hclk5` is not: it is the TMDS bit clock,
+and three of its segments are on general fabric rather than the dedicated clock
+network.  At 371 MHz that is jitter, and jitter is what makes a receiver lock and
+then fall out -- which is what both receivers do.
+
+That is the same defect the project already named -- "the route that carries the
+TMDS bit clock to the serialisers is missing inside nextpnr" -- now measured from
+the receiving end rather than inferred.
+
+## Next
+
+Compare how the **vendor's** bitstream routes `hclk5` against ours.  Its build
+works on this board, so whatever it does with that net that ours does not is the
+answer, and the project already carries `hclk-state.py` and `dump-routing.py` for
+reading HCLK state out of an unpacked bitstream.  That is a comparison, not a
+hunt.
