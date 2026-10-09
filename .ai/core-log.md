@@ -242,3 +242,33 @@ Reproduce the divider result before acting on it, since the one-behind behaviour
 - User Test: NOT RUN
 
 ---
+
+## 9 COMMIT Unreleased 2026-10-08T22:41:42-07:00
+
+#### Coming From:
+
+Unreleased 1846415
+
+#### Purpose:
+
+Establish that entry 8's divider result reproduces before acting on it, by running one bitstream six times with a power cycle before every load, all six required to agree.
+
+#### Outcome:
+
+The divider result reproduces. Six power-cycled runs of variant B, the bitstream whose only difference from the committed design is `defparam pll_27.ODIV0_SEL = 100`, all measured `0.5400 x sys_clk` with 2211.8 bit-12 edges per line, `hclk` following at `1.4850 x sys_clk` and `lock=11` on every line of every run; 43 samples were used per run with none skipped, so every step in the line counter was exactly one period. The six captures are byte-identical, `sha256 44732b80...`, 2156 bytes and 44 lines each with `n` from 0x0001 to 0x002c, and that is expected rather than suspicious because the design resets to the same state on every configuration while the capture opens before the first line arrives. It is also exactly what a wedged buffer looks like, so it was checked rather than assumed: the same running design captured for sixty seconds returned 122 lines rather than the same 44, so the data is live and the six runs are six real measurements. That check then exposed a second anomaly, recorded and not resolved. The sixty-second capture runs at 2.02 lines per second where the six thirty-second runs ran at 1.43, with `d(c27)` per line constant at 2211.8 in both, which is `0.5400 x 2^25` clk27 cycles per line. If a line really is 2^25 `sys_clk` cycles then the line rate cannot change, so either the cadence is not 2^25 cycles in the implementation or the line rate is not stable, and which of the two is not known. It does not touch the ratio result, which compares two bitstreams measured under the same conditions, but the absolute frequencies rest on assumptions that this leaves unverified: the UART anchor assumes the design's baud is exactly 115200 and the ratio assumes the cadence is exactly 2^25 cycles. The drift also fits the load and configuration trouble entry 8 found, since the board appears to change behaviour while left running. One framing in entry 7 is corrected here: the 3.9 per cent disagreement it noted between the cadence and UART anchors is an artefact of dividing the whole capture window by the number of line intervals when the window opens before the first line arrives, and is not a discrepancy in the design. The consequence for the project is that `pll_27`'s `ODIV0_SEL` is now worth changing in the desktop core itself, where the display is the observable. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and `core-log.md` was, and validated this entry as number 9 of the active log with a conforming header, six sections in canonical order, prose in Outcome and Next Steps, and an allowed Status set. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Change `pll_27`'s `ODIV0_SEL` from 50 to 100 in the desktop core, build it with the project's own scripts, load it after a power cycle rather than on top of whatever is running, and look at the display, which is the observable this line of work has been missing and which needs no absolute frequency to be meaningful. `pll_hdmi` should be left alone, having measured correct in these runs, and `pll_nes` likewise, since its keylink still answers. If the display comes up then the same change belongs upstream in the fork's packer rather than in the RTL, because halving the requested divider is a scaling fault every PLL this project builds inherits, and the boundary of the halving is still unknown after `pll_hdmi` measured correct at `ODIV0_SEL = 4`. The line-rate instability is worth a cycle of its own before any absolute frequency is quoted as fact, and the decoder should take its line period from the first to the last line rather than from the whole capture window. Evidence for this cycle is in `evidence/clock-smoke-six-runs.txt`; the board is left running variant B in SRAM and a power cycle returns it to its flash core.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: PASS
+- User Test: NOT RUN
+
+---

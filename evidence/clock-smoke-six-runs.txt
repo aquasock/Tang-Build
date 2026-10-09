@@ -1,0 +1,83 @@
+# clock-smoke: six power-cycled repeats of one bitstream
+#
+# Criterion set by the user: six runs, each preceded by a power cycle, all six
+# the same, before acting on the divider result from entry 8.
+#
+# Bitstream: variant B, /tmp/tb/variant-B/clock-smoke.fs, which differs from
+# the committed design by exactly one line, defparam pll_27.ODIV0_SEL = 100.
+# Loaded with openFPGALoader -b tangconsole after each reboot; IDCODE 0x1081b,
+# SRAM load to 100%, DONE.  Captured on /dev/ttyUSB1 at 115200 for 30 s.
+
+RUN          RATIO          EDGES/LINE   clk27        LOCK
+  six-1      0.5400 x sys   2211.8       26.9982 MHz  11 x44
+  six-2      0.5400 x sys   2211.8       26.9982 MHz  11 x44
+  six-3      0.5400 x sys   2211.8       26.9982 MHz  11 x44
+  six-4      0.5400 x sys   2211.8       26.9982 MHz  11 x44
+  six-5      0.5400 x sys   2211.8       26.9982 MHz  11 x44
+  six-6      0.5400 x sys   2211.8       26.9982 MHz  11 x44
+
+  hclk followed at 1.4850 x sys_clk (74.2452 MHz) in all six.
+  43 samples used per run, 0 skipped: every d(n) was exactly 1.
+
+  The six capture files are byte-identical:
+    sha256 44732b80376035af... for all of six-1 .. six-6, 2156 bytes each,
+    44 lines each, n = 0x0001 .. 0x002c.
+  That is expected rather than suspicious: the design resets to the same
+  state on every configuration, so a capture that opens before the first
+  line arrives sees the same stream.  It is NOT a stale buffer, and that
+  was checked rather than assumed -- see below.
+
+VALIDITY CHECK: IS THE CAPTURE LIVE?
+  Byte-identical files across six runs is exactly what a wedged buffer looks
+  like, so the same running design was captured for 60 s instead of 30:
+    122 lines in 60.0 s, n = 0x0038 .. 0x00b1, all d(n) = 1,
+    d(c27) = 2211 or 2212 throughout.
+  A stale buffer would have returned the same 44 lines again.  It returned
+  122, so the data is live and the six runs above are six real measurements.
+
+AND A SECOND ANOMALY, RECORDED RATHER THAN RESOLVED
+  The 60 s capture runs at 2.02 lines/s; the six 30 s runs ran at 1.43
+  lines/s.  d(c27) per line is 2211.8 in both, i.e. each line carries
+  0.5400 x 2^25 clk27 cycles.  If a line really is 2^25 sys_clk cycles, the
+  line rate cannot change -- so either the cadence is not 2^25 cycles in the
+  implementation, or the line rate is not stable, and which of the two is
+  not known.  It does not touch the ratio result, which compares two
+  bitstreams measured under the same conditions, but it does mean the
+  absolute frequencies rest on assumptions and should not be quoted as fact:
+    - the UART anchor assumes the design's baud is exactly 115200,
+    - the ratio assumes the cadence is exactly 2^25 sys_clk cycles.
+  Note also that the board's behaviour appears to drift while left running,
+  which is consistent with the load and configuration trouble found in
+  entry 8.  The board was left running variant B in SRAM.
+
+  One correction to entry 7's framing: the ~3.9% disagreement it noted
+  between the cadence and the UART anchors is an artefact of the decoder
+  dividing the whole capture window by the number of line intervals.  The
+  window opens before the first line arrives, so its dead time is counted
+  as if it were line periods and the cadence anchor reads low.  It is not a
+  discrepancy in the design.
+
+==================================================================
+decoder output, six-1 (the other five are identical)
+==================================================================
+capture : /tmp/tb/runs/six-1-variantB.bin
+           2156 bytes, 30.030 s
+lines   : 44;  d(n) values {1: 43}
+
+sys_clk reference:
+  UART anchor (434 x 115200 baud)          49.9968 MHz
+  cadence     (2^25 / line period)     48.0466 MHz
+  agreement                              3.901 %
+
+PLL lock bits (pll_27, pll_hdmi): 11 x44
+
+clocks, from counted bit-12 edges (8192 cycles each):
+  clk27                      0.5400 x sys_clk   (=  26.9982 MHz at the anchor)
+                             2211.8 bit-12 edges per line, 43 samples used, 0 skipped
+                           designed 0.5400 x sys_clk;  doubled would be 1.0801
+  hclk (CLKDIV output)       1.4850 x sys_clk   (=  74.2452 MHz at the anchor)
+                             6082.6 bit-12 edges per line, 43 samples used, 0 skipped
+                           designed 1.4851 x sys_clk;  doubled would be 2.9702
+
+  hclk5 = 5 x hclk and carries no flop of its own (a 371.25 MHz fabric
+  path fails timing here), so hclk is what establishes it.
