@@ -385,3 +385,65 @@ The corrected state of the question: the serialisers are clocked, the pad and
 serialiser configuration matches the vendor's, the PLL frequencies are right,
 and the bitstream is reproducible.  The display still does not come up, and
 what differs from the vendor's build is now open again.
+
+==================================================================
+12. The first real difference: how lane 3's clock arrives
+==================================================================
+
+The HCLK block mux state was compared by wrapping apicula's own
+`parse_hclk_block` and running the ordinary unpack over both bitstreams, so
+both readings come from the decoder rather than from a reimplementation
+(`/home/vash/tools/pnr-test/hclk-state.py`).  Exactly one block decodes to
+anything in either bitstream -- `(81,181)`, the HCLK block for lane 3, which
+serves two of this design's three TMDS serialisers -- and the two disagree.
+
+OURS, block (81,181):
+
+    CLKDIV_3: DIV_MODE="5"
+    HCLK3:    HCLK_BUF_BI33="HCLK_MUX_BETA33"
+              HCLK_MUX_ALPHA31="HCLK_BUF_BO31"
+              HCLK_BUF_BI31="HCLK_MUX_BETA31"
+              HCLK_MUX_ALPHA33="HCLK_BUF_BO33"
+              HCLK_MUX_BETA31="L2HCLK31"
+              HCLK_MUX_BETA33="L2HCLK33"
+
+VENDOR, same block:
+
+    CLKDIV_0: DIV_MODE="5"
+    HCLK3:    HCLK_MUX_GAMMA30="HCLK_UNK581"
+              HCLK_MUX_ALPHA30="HCLK_BUF_BO30"
+
+TWO THINGS FOLLOW.  `L2HCLK` is the logic-to-HCLK entry -- a block whose clock
+arrives from fabric -- and ours selects it for both BETA muxes, where the
+vendor selects `HCLK_UNK581` on GAMMA.  `HCLK_UNK` is the band that carries the
+inter-HCLK wires, the block-to-block traffic of the dedicated HCLK network
+(`gw5_make_hclk_pips`' `_IHCLK` branch names its wires out of that band), so
+the vendor's lane 3 is driven over the dedicated network while ours is driven
+from general fabric.  Second, the CLKDIV slot differs -- `CLKDIV_3` in ours,
+`CLKDIV_0` in the vendor's -- while both divisors read `DIV_MODE="5"`.
+
+This is consistent with everything already measured and it explains the
+software path end to end: nextpnr reports 3 dedicated-routing failures for
+`hclk5`, falls back to general fabric, and `gowin_pack` faithfully encodes the
+resulting fabric entry.  The bitstream is not lying about the route; the route
+is one that cannot work at 371.25 MHz.  The serialisers' own `FCLK` and `PCLK`
+are downstream of the lane and so are untouched, which is why they match the
+vendor's and why the search kept coming back to them.
+
+The block beside the PLL, `(81,0)` for lane 2, decodes to `{}` in BOTH
+bitstreams, so that is not a difference and the search should not go there.
+
+ESTABLISHED: the two bitstreams differ at `(81,181)` in which input lane 3's
+clock mux selects, ours fabric and the vendor's inter-HCLK, and the CLKDIV slot
+used.  INFERRED, not measured: that a fabric clock is what makes 371.25 MHz
+unusable here, and therefore that a serialiser clocked from lane 3 gets a
+smear rather than a bit clock.  The physics is sound and the vendor's choice
+points the same way, but nothing here has put a probe on the pin.
+
+CAVEAT ON THE REFERENCE.  The vendor bitstream compared is
+`TinyTang/build/desktop/source/impl/pnr/desktop.fs`, whose `.bin`
+(`c8406c7f...`) is NOT the file that runs on the card (`desktop.bin`,
+`4fcc62e6...`).  It is a Gowin build of the same source with the same pin
+constraints, which is what makes a per-site configuration comparison valid,
+but its own display has not been confirmed working.  A comparison against the
+card's image would be stronger, and that image is only on the SD card.

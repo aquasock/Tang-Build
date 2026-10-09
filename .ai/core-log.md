@@ -545,3 +545,33 @@ Find what else differs from the vendor's build, now that the serialisers' clock 
 - User Test: N/A
 
 ---
+
+## 19 COMMIT Unreleased 2026-10-09T06:33:04-07:00
+
+#### Coming From:
+
+Unreleased a8ec490
+
+#### Purpose:
+
+Compare the HCLK block mux state between this build's bitstream and the vendor's, which entry 18 named as the next place to look once the serialisers' clock port turned out to match.
+
+#### Outcome:
+
+It found the first real difference in the search, and it is in the right place. The comparison wrapped apicula's own `parse_hclk_block` and ran the ordinary unpack over both bitstreams, so both readings come from the decoder rather than from a reimplementation, and exactly one block decodes to anything in either: `(81,181)`, the HCLK block for lane 3, which serves two of this design's three TMDS serialisers. Ours decodes `HCLK3` with `HCLK_MUX_BETA31="L2HCLK31"` and `HCLK_MUX_BETA33="L2HCLK33"` beside `CLKDIV_3: DIV_MODE="5"`; the vendor's decodes `HCLK3` with `HCLK_MUX_GAMMA30="HCLK_UNK581"` and `HCLK_MUX_ALPHA30="HCLK_BUF_BO30"` beside `CLKDIV_0: DIV_MODE="5"`. `L2HCLK` is the logic-to-HCLK entry, a block whose clock arrives from fabric, and ours selects it where the vendor selects `HCLK_UNK581`, which is the band the inter-HCLK wires live in -- the block-to-block traffic of the dedicated HCLK network, the wires `gw5_make_hclk_pips`' `_IHCLK` branch names out of that band. So the vendor's lane 3 is driven over the dedicated network and ours is driven from general fabric, and the CLKDIV slot differs as well, `CLKDIV_3` against `CLKDIV_0`. This joins up with what was already measured and explains the software path end to end: nextpnr reports 3 dedicated-routing failures for `hclk5`, falls back to general fabric, and `gowin_pack` faithfully encodes the resulting fabric entry, so the bitstream is not lying about the route -- the route is one that cannot work at 371.25 MHz. The serialisers' own `FCLK` and `PCLK` sit downstream of the lane and are untouched, which is why they matched the vendor's and why the last three cycles kept arriving back at them. The block beside the PLL, `(81,0)` for lane 2, decodes to `{}` in both bitstreams, so that is not a difference and is recorded here so the search does not go there. One caveat is stated rather than buried: the vendor bitstream compared is `TinyTang/build/desktop/source/impl/pnr/desktop.fs`, whose `.bin` is `c8406c7f...` and is not the file that runs on the card, `desktop.bin` at `4fcc62e6...`; it is a Gowin build of the same source with the same pin constraints, which is what makes a per-site configuration comparison valid, but its own display has not been confirmed working and a comparison against the card's image would be stronger. What is established is the difference and its direction; that a fabric clock is what makes 371.25 MHz unusable here is inferred from the physics and from the vendor's choice, not measured, and `evidence/desktop-clock-routing.txt` section 12 keeps those apart. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 19 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Strengthen the reference before writing any fix, because the whole reading rests on a vendor build whose own display is unconfirmed: the card's `desktop.bin` at `4fcc62e6...` is the file that actually drives a working display, it is only on the SD card, and decoding its HCLK block state and putting it beside the two readings here would either make the lane-3 difference conclusive or replace it. Then, if it holds, the fix is that nextpnr must carry the PLL's clock to lane 3 over the inter-HCLK network rather than falling back to fabric -- the three warnings are the moment it gives up -- which is a change in how the HCLK network is modelled or routed rather than anything in the core, the packer or the database. The desktop core still needs no change, and the refuted candidates -- a missing `FCLK`, an unjoined HCLK node, and a dropped general-fabric `FCLK` -- should not be re-walked.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---
