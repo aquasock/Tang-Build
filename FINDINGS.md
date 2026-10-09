@@ -173,13 +173,14 @@ settle it outright.
 ## 6. What is still unproven
 
 - **The display.**  The desktop core runs on the board and answers on UART1 at
-  2 Mbaud, but its HDMI output produces no signal.  The cause is located: this
-  build's bitstream has no `FCLK` connection at any of the three TMDS
-  serialisers, where the vendor's has one at all three, and the reason is that
-  nextpnr cannot route the 371.25 MHz TMDS bit clock from the PLL output to
-  those inputs on dedicated routing.  That is a router defect, not a gap in the
-  database — the arcs exist and nextpnr creates the pip.  Evidence in
-  [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt).
+  2 Mbaud, but its HDMI output produces no signal, and the cause is not yet
+  located.  What has been ruled out by measurement: the bitstream's `FCLK` and
+  `PCLK` at the three TMDS serialisers match the vendor's exactly, the PLL
+  frequencies are right, the pad and serialiser configuration matches, and the
+  bitstream is byte-reproducible.  An earlier reading of this file that the
+  `FCLK` was absent was wrong — see section 11 of
+  [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt),
+  which supersedes the sections before it.
 - **The core's OLED and audio paths**, which are built but unexercised.
 - **Timing at pixel rates**, which the open flow reports but which has not been
   checked against the vendor's own numbers for this design.
@@ -243,13 +244,10 @@ earlier no-PLL experiment that first exposed a clock-routing gap in
 [`evidence/desktop-core-nopll.txt`](evidence/desktop-core-nopll.txt).
 
 The core then packs, loads and **runs**, and the display is the one thing left
-broken.  It is broken for a single located reason: nextpnr cannot carry the
-371.25 MHz TMDS bit clock from the PLL output to the three serialisers' `FCLK`
-inputs on dedicated routing — three of the 947 dedicated-routing failures in
-that run name exactly those pins — so this build's bitstream has no `FCLK`
-connection at any of them, where the vendor's has one at all three.  The core
-runs regardless because `PCLK` is present, which is why the failure presents as
-a display fault rather than a clocking one.  The full chain, and the four
-candidate explanations that were measured and refuted along the way, are in
-[`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt);
-reasoning in [OPEN-FLOW-DESKTOP.md](OPEN-FLOW-DESKTOP.md).
+broken — for a reason that is no longer thought to be at the serialisers.  The
+bitstream's `FCLK` and `PCLK` at all three TMDS serialisers match the vendor's
+exactly, the PLL frequencies are right, and packing the routed netlist
+reproduces the loaded bitstream byte for byte.  An earlier reading that the
+`FCLK` was missing was wrong.  `evidence/desktop-clock-routing.txt` records
+where the search has been — including the readings later refuted, and the
+correction — and reasoning is in [OPEN-FLOW-DESKTOP.md](OPEN-FLOW-DESKTOP.md).

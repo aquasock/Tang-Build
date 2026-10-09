@@ -514,3 +514,34 @@ None.
 - User Test: N/A
 
 ---
+
+## 18 COMMIT Unreleased 2026-10-09T06:18:16-07:00
+
+#### Coming From:
+
+Unreleased 5ea7c57
+
+#### Purpose:
+
+Run the test entry 17 named -- pack the routed netlist and unpack the result -- and correct the record if it disagrees.
+
+#### Outcome:
+
+It disagrees, and this entry supersedes entry 14 on the point it rests on. Packing the routed netlist from the same run with `gowin_pack` and unpacking the result shows **FCLK present at all three TMDS serialisers**, `R58C182`, `R101C182` and `R103C182`, each `.FCLK(...HCLK0)` beside its `.PCLK(...CLK0)` -- the same source wire the vendor's own unpack shows. So the packer does not drop it, entry 17's hypothesis that it discards an FCLK driven over general fabric is refuted, and entry 14's finding that this build's bitstream has no `FCLK` at any of the three serialisers was wrong. What makes the reading decisive rather than a third reading of the same kind is that the pack reproduces the loaded bitstream exactly: the freshly packed `.fs` is `ec6baf2a894a8b6c3f991874d969b27ff5bab391a26d8440d85efe39dc80b6f1` and its `.bin` is `9b70a448dfc3f83c1c9d7afd02f0cab6c9fbf18824f12cb905d9badf0aa0f6e5`, both byte-identical to the hashes recorded for the files that were staged and loaded on the board, so the bytes that were on the board are the bytes that were unpacked. Why the earlier unpack read differently is not recoverable, because `unpack-ours.v` lived in `/tmp` and is gone, and this entry does not pretend to explain it; what it records is that the surviving inputs were re-derived twice over and agree, and that the earlier reading is the one to distrust. The correction reaches three files: `README.md`'s status item and its not-verified list, `FINDINGS.md` sections 6 and 9, and the evidence file, whose section 11 now carries the correction and marks sections 8 to 10 as superseded. The second result is the more useful one. The bitstream is **byte-reproducible from this repository's own tools**: the fork's nextpnr at `7ed099ec`, the fork's `gowin_pack`, and the database regenerated from the local Gowin install reproduce the project's own core exactly, from its own netlist, hours after the binary that first built it was lost. That is now recorded in the README's verified list, and it changes what a next cycle can do, because a structured comparison against the vendor's build no longer depends on a build that cannot be repeated. What remains is that the serialisers are clocked, the pad and serialiser configuration matches the vendor's, the PLL frequencies are right, and the display still does not come up, so the difference from the vendor's build is somewhere other than the serialisers' clock port and is open again. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 18 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history -- entry 14 is left as written and named here as superseded, which is what the syntax asks for. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Find what else differs from the vendor's build, now that the serialisers' clock port does not, and use the reproducibility to do it: the same structured per-site comparison that cleared the pad configuration and the serialiser attributes is available again, and the places it has not been applied are the HCLK block mux state and the CLKDIV, which is where the lane a serialiser is clocked from gets selected rather than merely named -- `FCLK` naming `HCLK0` in both builds says nothing about which lane's HCLK sits behind it or how that lane is driven. Compare those cells and their configuration between the two bitstreams, tile by tile, and treat any difference as the next lead; if there is none, then the fault is not in the bitstream's configuration at all and the next cycle should say so and move to the board side. The desktop core still needs no change, and the three candidates refuted in entries 14 and 17 -- a missing `FCLK`, an unjoined HCLK node, and a dropped general-fabric `FCLK` -- should not be re-walked.
+
+#### Files Modified:
+
+- README.md
+- FINDINGS.md
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

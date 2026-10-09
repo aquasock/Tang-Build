@@ -226,7 +226,11 @@ Both bitstreams unpacked with the same tool, same device, same three sites:
   ours    R101C182: .PCLK(R101C182_CLK0)    -- no .FCLK
   ours    R103C182: .PCLK(R103C182_CLK0)    -- no .FCLK
 
-OUR BITSTREAM HAS NO FCLK CONNECTION AT ANY OF THE THREE TMDS SERIALISERS.
+OUR BITSTREAM WAS RECORDED HERE AS HAVING NO FCLK CONNECTION AT ANY OF THE
+THREE TMDS SERIALISERS.  THAT IS WRONG.  See section 11, which supersedes
+sections 8 to 10: packing the routed netlist reproduces this exact bitstream
+byte for byte, and unpacking it shows FCLK present at all three serialisers,
+sourced from HCLK0, exactly as the vendor's does.
 PCLK is present, which is why the core runs and its pixel-side logic works;
 FCLK is the serialiser's shift clock, and without it the cell cannot emit a
 bit, so there is no TMDS at all and the sink never locks.
@@ -331,3 +335,53 @@ way.  And `clk`, the 21.49 MHz NES clock, reports 2138 users and 2138 wires,
 one wire per sink: it is routed as a star over general fabric rather than
 through a clock spine, which is why the whole design works while the 371.25
 MHz one does not.
+
+==================================================================
+11. Correction: the FCLK is present, and the bitstream reproduces exactly
+==================================================================
+
+The test named at the end of section 10 was run, and it refutes section 8.
+Packing the routed netlist from the same run with `gowin_pack` and unpacking
+the result gives:
+
+  OSER10 R58C182:  .PCLK(R58C182_CLK0)  .FCLK(R58C182_HCLK0)
+  OSER10 R101C182: .PCLK(R101C182_CLK0) .FCLK(R101C182_HCLK0)
+  OSER10 R103C182: .PCLK(R103C182_CLK0) .FCLK(R103C182_HCLK0)
+
+FCLK IS PRESENT at all three serialisers, sourced from `HCLK0`, which is what
+the vendor's unpack shows too.  The packer does not drop it, and the
+hypothesis at the end of section 10 -- that it discards an FCLK driven over
+general fabric or over an HCLK wire outside `hclk_pips` -- is refuted.
+
+What makes this decisive rather than another reading is that the pack
+reproduces the loaded bitstream exactly:
+
+  freshly packed .fs   sha256 ec6baf2a894a8b6c3f991874d969b27ff5bab391a26d8440d85efe39dc80b6f1
+  loaded .fs, recorded sha256 ec6baf2a894a8b6c3f991874d969b27ff5bab391a26d8440d85efe39dc80b6f1
+
+  freshly packed .bin  sha256 9b70a448dfc3f83c1c9d7afd02f0cab6c9fbf18824f12cb905d9badf0aa0f6e5
+  staged   .bin, recorded sha256 9b70a448dfc3f83c1c9d7afd02f0cab6c9fbf18824f12cb905d9badf0aa0f6e5
+
+The bytes that were on the board are the bytes that were just unpacked.  Two
+consequences, one of them encouraging:
+
+  * section 8's claim is wrong and the search for the display's cause restarts
+    from a bitstream whose `FCLK` lines match the vendor's exactly.  What is
+    left is what differs ELSEWHERE, not at the serialisers' clock port.
+
+  * the bitstream is BYTE-REPRODUCIBLE.  `nextpnr` from the fork's `7ed099ec`
+    plus `gowin_pack` from the fork's apicula plus the regenerated database
+    reproduce the project's own bitstream from its own netlist, exactly, hours
+    after the binary that first made it was lost.  That is worth more than the
+    finding it replaced.
+
+Why the earlier unpack read differently is not recoverable: `unpack-ours.v`
+was in `/tmp` and is gone, so the file that produced it cannot be re-examined.
+What is recorded above was verified twice over from surviving inputs -- pack
+then unpack, and the hash of the pack against the recorded hash of the loaded
+file -- and it is the reading to trust.
+
+The corrected state of the question: the serialisers are clocked, the pad and
+serialiser configuration matches the vendor's, the PLL frequencies are right,
+and the bitstream is reproducible.  The display still does not come up, and
+what differs from the vendor's build is now open again.

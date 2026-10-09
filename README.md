@@ -44,11 +44,11 @@ Verilog  --yosys-->  JSON  --nextpnr-himbaechel-->  routed JSON  --gowin_pack-->
 - [ ] …**and runs with a display.**  The core runs — loaded over two-wire
       `tangload`, it answers on UART1 at 2 Mbaud after a full SRAM erase, and
       the console returns to its prompt — but its HDMI output produces no
-      signal.  This build's bitstream has **no `FCLK` connection at any of the
-      three TMDS serialisers**, where the vendor's has one at all three, because
-      nextpnr cannot carry the 371.25 MHz TMDS bit clock from the PLL output to
-      those inputs on dedicated routing.  The fault is in the router, not in
-      the core, the packer or the database —
+      signal.  What is *not* the cause is now established: the build's clock
+      and pad configuration at the three TMDS serialisers matches the vendor's
+      (`FCLK` present and sourced from `HCLK0` at all three, `PCLK` likewise),
+      the PLL frequencies are right, and the bitstream is byte-reproducible.
+      The difference from the vendor's build is somewhere else, and is open —
       [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt)
 - [x] `.fs` → `.bin` conversion, so open-built cores load from the SD card
       through TinyTang's existing `tangload` —
@@ -94,14 +94,21 @@ Verified on hardware, with the raw bytes kept under `evidence/`:
   `tools/fs-to-bin.py` reproduces Gowin's own `.bin` from Gowin's own `.fs`
   byte for byte (`sha256 c8406c7f…`, `cmp` clean), and the file it produces
   loads on the board
+- **the bitstream is byte-reproducible from this repository's own tools.**
+  `nextpnr` built from the fork's `epic/gw5ast138c` tip, `gowin_pack` from the
+  fork's apicula, and the database regenerated from the local Gowin install
+  rebuild the core's bitstream exactly — `.fs`
+  `ec6baf2a894a8b6c3f991874d969b27ff5bab391a26d8440d85efe39dc80b6f1`, `.bin`
+  `9b70a448…` — matching the file that ran on the board
 
 Not verified, and stated plainly in [`FINDINGS.md`](FINDINGS.md):
 
 - **the display.**  The desktop core runs, but its HDMI output produces no
-  signal: this build's bitstream has no `FCLK` connection at the three TMDS
-  serialisers, where the vendor's has one at all three.  The missing route is
-  inside nextpnr — not in the core, the packer or the database — see
-  [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt)
+  signal, and the reason is no longer thought to be at the serialisers: the
+  clock and pad configuration there matches the vendor's, `FCLK` included.  What
+  differs from the vendor's build is elsewhere and is not yet located — see
+  [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt),
+  sections 11 onwards, which supersede the earlier reading in that file
 - the core's **OLED and audio** paths, which are built but unexercised
 - the UART capture **drops bytes occasionally** (USB-serial), so it is evidence
   of content, not a byte-exact image; the `.fs` file is the exact artifact
