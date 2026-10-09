@@ -1,0 +1,123 @@
+# The TMDS bit clock's route, located
+
+Why does `hclk5` — the 371.25 MHz TMDS bit clock — fail dedicated routing in the
+desktop core and end up on general fabric?  This is that question answered as far
+as static analysis can take it, with the one remaining link marked as inference.
+
+## The vendor comparison
+
+Already in `evidence/desktop-clock-routing.txt` sections 14 and 15, and
+reproduced here independently before it was noticed that it was already there.
+Decoding the HCLK blocks of both bitstreams:
+
+```
+vendor   (81,181)  CLKDIV_0  DIV_MODE=5   HCLK3: HCLK_MUX_GAMMA30, HCLK_MUX_ALPHA30
+ours     (81,181)  CLKDIV_3  DIV_MODE=5   HCLK3: ALPHA30, ALPHA33, BETA30, BETA33, ...
+ours     (27,181)  HCLK1: BETA12 = L2HCLK12                     <- we have this, vendor does not
+```
+
+Two things differ, and sections 14/15 had already refuted the first: the CLKDIV
+slot (`CLKDIV_3` against `CLKDIV_0`) and the fabric lane entry, because
+clock-smoke measured working at 74.2452 MHz on the same entry.  What section 15
+left open was the OSER10 cells, and entry 36's capture closed half of that: the
+serialisers do produce valid TMDS a receiver locks onto.
+
+## The input mux at the divider
+
+The chain into the divider's input, from the database:
+
+```
+... -> HCLK_UNK581 -> HCLK_MUX_GAMMA30 -> HCLK_MUX_ALPHA30 -> CLKDIV_I30
+```
+
+The **vendor selects the GAMMA path**, fed by wire 581 — an HCLK-network wire.
+**Ours selects ALPHA/BETA**, fed by `L2HCLK`, the fabric entry.  Same tile, same
+divider setting, different input selected.
+
+## And the network input is modelled as unconnected
+
+```
+HCLK_MUX_GAMMA30 is fed by ['HCLK_UNK563', 'HCLK_UNK571', 'HCLK_UNK581'] at (81,181)
+  HCLK_UNK563 is a destination in tiles: []
+  HCLK_UNK571 is a destination in tiles: [(81,181)]
+  HCLK_UNK581 is a destination in tiles: [(81,181)]
+```
+
+Three candidate sources, and **not one is driven from another tile**.  Two are
+destinations only inside the divider's own tile; the third is driven nowhere.
+So the database models the network input as unconnected, and nextpnr cannot
+route a clock *into* it — which is why it takes the fabric entry, which is why
+`hclk5` fails dedicated routing three times, which is why the bit clock carries
+fabric jitter.
+
+## Why there is no per-tile path either
+
+```
+db.hclk_pips: 171 tiles, 54 rows, two tiles per row
+row 81: tiles at x=0 and x=181 only; columns 1..181 have none
+```
+
+The failing route is `X1Y81/MPLLCLKOUT0 -> X181Y81/CLKDIV_I33`, 180 columns of
+row 81.  The switch matrix has tiles only at the two ends.  The crossing is not
+meant to be per-tile — it is meant to be the spine — and the spine model is:
+
+```
+spine_select_wires: bottom: SPINE17..23 at (81, 92..94)
+                    top:    SPINE17..23 at (27, 92..94)
+```
+
+Two sections.  The PLL and the CLKDIV are **both in the bottom section**, with
+the spine between them.  Ours additionally carries an HCLK block at **(27, 181)**
+— the top section — which the vendor does not, so our path hops sections as well
+as taking the fabric entry.
+
+## Two smaller findings, recorded because they mislead
+
+The arch generator puts **one hardcoded timing class on every HCLK pip**,
+`get_tm_class(db, "X01")` with an `XXX` beside it in `gowin_arch_gen.py`.  Whether
+or not that matters for a clock net, the router is given no timing reason to
+prefer HCLK.
+
+And apicula's hand-written name table and its own pip data disagree by four:
+`wirenames.py` calls wire 585 `HCLK_MUX_GAMMA30`, while the pips carry **581** and
+not 585.  The arch is generated from the pips, so the arch is probably right and
+the name is cosmetic — but it was the name that led here, so it is written down.
+
+**A wrong turn, retracted.**  An earlier reading in this cycle concluded from
+grepping the generated `.bba` that `HCLK_UNK581` was "not a wire and in no pip".
+That was an artefact: the `.bba` declares every name once as a `str` and refers
+to wires by index, so a working resource looks identical to a missing one.  The
+generator has no name filter at all — it emits a wire and a pip for every source
+and destination in `hclk_pips`.  The conclusion drawn from the grep is withdrawn.
+
+## The chain, with its inference marked
+
+1. **Measured** — the Tang emits valid TMDS that a receiver locks for about
+   0.6 s before the link drops.  (`evidence/hdmi-capture-card.txt`)
+2. **Measured** — `hclk5` fails dedicated routing three times and falls back to
+   fabric, and general fabric at 371 MHz is jitter.  (the router's own report)
+3. **Measured** — the network input mux at the divider has no source from any
+   other tile in the database, and the spine that should span the section sits at
+   column 93 of a section our build only partly occupies.  (the chipdb)
+4. **Inferred, and not yet proved** — that fabric route is what puts enough
+   jitter on the bit clock to break the link.  A scope on the TMDS pair would
+   settle it, or a build with the network route restored and the link then
+   holding.
+
+## Next
+
+The target is an **apicula chipdb gap**: the interconnect driving
+`HCLK_UNK571` and `581` is not modelled, so the HCLK network's span between the
+PLL's section and the CLKDIV's does not exist as far as nextpnr is concerned.
+Modelling it — from the vendor's `.dat`/`.fse` the chipdb builder already parses
+— is what would give the TMDS bit clock a dedicated route.  This is the same
+defect the README has described from the start, now located to a wire, a tile and
+a missing pip.
+
+Tools, all offline and in `tools/`:
+
+```
+tools/chipdb-hclk-probe.py <msgpack> [wire ...]   what the db knows about a wire
+tools/chipdb-hclk-tiles.py <msgpack> [row]        where the switch-matrix tiles are
+tools/chipdb-hclk-trace.py <msgpack> [wire ...]   who drives what, tile by tile
+```

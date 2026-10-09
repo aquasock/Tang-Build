@@ -1119,3 +1119,36 @@ Compare how the VENDOR's bitstream routes `hclk5` against ours. That build works
 - User Test: N/A
 
 ---
+
+## 37 COMMIT Unreleased 2026-10-09T12:49:16-07:00
+
+#### Coming From:
+
+Unreleased db2b83a
+
+#### Purpose:
+
+Find out why the TMDS bit clock falls back to general fabric, by comparing our routing against the vendor's.
+
+#### Outcome:
+
+The TMDS bit clock's route is located, to a wire, a tile and a missing pip. The comparison began with the HCLK blocks of both bitstreams and reproduced what `evidence/desktop-clock-routing.txt` sections 14 and 15 already recorded -- the CLKDIV slot differing, `CLKDIV_3` against `CLKDIV_0`, and the fabric lane entry -- before it was noticed that the evidence already held it. The slot and the fabric entry are both already refuted there, since clock-smoke measured working at 74.2452 MHz on the same entry, so the comparison's own value was smaller than it first appeared and this entry says so rather than presenting it as new. What the comparison did not have, and could not have had, is entry 36's measurement: section 15 left open whether a clock on that entry can drive a serialiser, and the capture card has now shown that it can, since the serialisers produce valid TMDS a receiver locks onto. That closes the correctness half of the open question and leaves stability. The chain into the divider's input explains the rest: `HCLK_UNK581 -> HCLK_MUX_GAMMA30 -> HCLK_MUX_ALPHA30 -> CLKDIV_I30`, where the vendor selects the GAMMA path fed by an HCLK-network wire and ours selects ALPHA/BETA fed by `L2HCLK`, the fabric entry -- same tile, same divider setting, different input selected. The reason is in the database: `HCLK_MUX_GAMMA30` has three candidate sources and not one is driven from another tile, two being destinations only inside the divider's own tile and the third driven nowhere, so nextpnr cannot route a clock into the network input at all. Nor is there a per-tile path to fall back on, because the HCLK switch matrix carries only two tiles on row 81, at x=0 and x=181, with the 180 columns between them empty, while the failing route is exactly that span. The crossing is meant to be the spine, and the spine model shows two sections with their spines at columns 92 to 94, at rows 81 and 27; the PLL and the CLKDIV are both in the bottom section, and our build additionally carries an HCLK block at row 27 column 181, the top section, which the vendor does not -- so our path hops sections as well as taking the fabric entry. Two smaller things are recorded because they mislead. The arch generator applies one hardcoded timing class to every HCLK pip, `get_tm_class(db, "X01")` with an `XXX` beside it, so the router is given no timing reason to prefer HCLK. And apicula's hand-written name table disagrees with its own pip data by four, calling wire 585 `HCLK_MUX_GAMMA30` while the pips carry 581 and not 585; the arch is generated from the pips, so the arch is probably right and the name cosmetic, but it was the name that led here. One wrong turn is retracted: an earlier reading in this cycle concluded from grepping the generated `.bba` that `HCLK_UNK581` was not a wire and in no pip, which was an artefact of that file declaring every name once as a `str` and referring to wires by index, so that a working resource looks exactly like a missing one; the generator has no name filter at all, and the conclusion drawn from the grep is withdrawn. The resulting chain has three measured links -- the receiver's 0.6 s of lock, the router's three `hclk5` failures, and the database's unconnected network input -- and one that is inference and marked as such: that fabric jitter on the bit clock is what breaks the link. `evidence/hclk-route-gap.txt` records the whole of it, and three offline probes join the repository: `tools/chipdb-hclk-probe.py`, `tools/chipdb-hclk-tiles.py` and `tools/chipdb-hclk-trace.py`. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 37 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+The target is an apicula chipdb gap, and it is specific: the interconnect that drives `HCLK_UNK571` and `HCLK_UNK581` is not modelled, so the HCLK network's span between the PLL's section and the CLKDIV's does not exist for nextpnr. Modelling it, from the vendor's `.dat` and `.fse` files the chipdb builder already parses, is what would give the TMDS bit clock a dedicated route; after that, re-place and check whether the three `hclk5` dedicated-routing failures are gone, which is offline and costs nothing, and only then spend a board cycle. The inferred link should be closed deliberately rather than assumed: a scope on the TMDS pair would show the jitter directly, and a build with the route restored would show the link holding. Do not re-walk the CLKDIV slot or the fabric lane entry, both refuted in sections 14 and 15, nor the lane selection and the 2x clock defect, both retired in entry 35; do not conclude anything about a wire from grepping the `.bba`, which is what the retraction above is for. The desktop patch consolidation recorded in `evidence/desktop-display-cycle.txt` section 7 remains deferred at the user's direction. Keep the power-cycle rule on every load.
+
+#### Files Modified:
+
+- tools/chipdb-hclk-probe.py
+- tools/chipdb-hclk-tiles.py
+- tools/chipdb-hclk-trace.py
+- evidence/hclk-route-gap.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---
