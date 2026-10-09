@@ -1,7 +1,7 @@
 # Toolchain
 
-Everything here was run on Linux (x86-64). No root was required: the whole
-chain is a single self-contained bundle plus one git clone.
+Everything here was run on Linux (x86-64). No root was required: a
+self-contained bundle, two git clones, and one vendor install.
 
 ## The bundle: oss-cad-suite
 
@@ -23,22 +23,115 @@ What it provides, as measured on 2026-10-08:
 | `nextpnr-himbaechel` | 0.11.1-54-g861c57be | built with `-DHIMBAECHEL_GOWIN_DEVICES=all` |
 | `openFPGALoader` | v1.1.1 | knows `-b tangconsole` and `-b tangmega138k` |
 | `gowin_pack` / `gowin_unpack` | apycula 0.34 | bitstream pack/unpack |
-| `apycula` (Python) | 0.34 | device databases live here |
+| `apycula` (Python) | 0.34 | device-database library |
 
-The device database for this part is inside the bundle:
+The suite's `nextpnr-himbaechel` and its device database are **not** the ones
+this project builds with. Both are replaced below.
+
+## The toolchain forks
+
+`nextpnr`'s Gowin architecture is generated *from* apicula's device database at
+build time, so the two move together and are pinned together. Both carry the
+project's device work on branch `epic/gw5ast138c`:
 
 ```
-lib/python3.11/site-packages/apycula/GW5AST-138C.msgpack.xz     1.16 MB xz → 24 MB
+YosysHQ/apicula  ->  mathieufro/apicula  ->  aquasock/apicula
+YosysHQ/nextpnr  ->  mathieufro/nextpnr  ->  aquasock/nextpnr
 ```
-
-That file is the whole reason the flow works without vendor tools: `nextpnr`'s
-Gowin architecture is generated from it, and `gowin_pack` needs it to emit a
-bitstream.
-
-## The examples: upstream apicula
 
 ```bash
-git clone --depth 1 https://github.com/YosysHQ/apicula.git
+git clone -b epic/gw5ast138c https://github.com/aquasock/apicula.git
+git clone -b epic/gw5ast138c https://github.com/aquasock/nextpnr.git
+```
+
+The aquasock forks are the same commits as `mathieufro`'s; they exist so the
+branch has a home this project may push to. Nothing here needs upstream
+`YosysHQ` checkouts.
+
+## The device database
+
+**It is not in either repository, and it is not in the bundle worth having.**
+`apycula/.gitignore` carries `*.msgpack.xz`, because the database is *built*
+from Gowin's own `.dat` files rather than written — so it is regenerated
+locally, never fetched, and a clone alone cannot produce a bitstream.
+
+```bash
+export GOWINHOME=/path/to/gowin-1.9.11.03          # a vendor IDE install
+cd apicula
+PYTHONPATH=. python3 -m apycula.chipdb_builder GW5AST-138C \
+    -o apycula/GW5AST-138C.msgpack.xz
+```
+
+`msgspec` has to be importable for this, and the bundle does not ship it — see
+the traps at the end of the next section.
+
+Expect `sha256 3cfbe062684bbb807f7b17a0434211dbd0f7be895f16afc7055fd974fec2a9df`,
+850,468 bytes, in about twelve seconds. That is byte-for-byte the database the
+builds here were made from, so a disagreement means a different Gowin install,
+not a race.
+
+The suite's own database must not be used in its place. Both are for
+`GW5AST-138C` and both carry the `PLL` tables; what the suite's lacks is every
+*instance-level clock structure*, which is exactly what this project needs.
+Measured 2026-10-08:
+
+| database | bytes | `hclk_pips` | `io2hclk` | `hclk_div2` | tiles carrying a `pll` |
+|---|---|---|---|---|---|
+| suite (apycula 0.34) | 1,155,392 | 0 | 0 | 0 | 0 |
+| regenerated | 850,468 | 171 | 6 | 6 | 12 |
+
+With the suite's database `nextpnr` has no placeable PLL bel and no HCLK pips,
+so it stops at
+
+```
+ERROR: Unable to place cell 'pll_nes.PLL_inst', no BELs remaining to implement cell type 'PLL'
+```
+
+With the regenerated one the twelve PLL sites and the clock distribution are
+present, and the flow gets past packing, placement and routing. This is the
+first thing to check when a build stops at a PLL.
+
+## Building nextpnr against the database
+
+```bash
+export PYTHONPATH=$PWD/../apicula     # the FORK's apycula, not the suite's
+cmake -S ../nextpnr -B build \
+    -DARCH=himbaechel -DHIMBAECHEL_UARCH=gowin \
+    -DHIMBAECHEL_GOWIN_DEVICES=GW5AST-138C \
+    -DCMAKE_BUILD_TYPE=Release -DPython3_EXECUTABLE=python3
+make -C build nextpnr-himbaechel -j"$(nproc)"
+```
+
+`PYTHONPATH` is the whole point of the exercise. The build runs
+`himbaechel/uarch/gowin/gowin_arch_gen.py` with that interpreter, and it must
+import the fork's `apycula` rather than the suite's — otherwise the generated
+architecture is the one built from the database above that does not work.
+
+The two generated artefacts can be checked without a full rebuild, which is
+worth doing before believing any timing number that comes out of the binary:
+
+```bash
+PYTHONPATH=$PWD/../apicula python3 himbaechel/uarch/gowin/gowin_arch_gen.py \
+    -d GW5AST-138C -o /tmp/chipdb-GW5AST-138C.bba
+```
+
+| artefact | bytes | sha256 |
+|---|---|---|
+| `chipdb-GW5AST-138C.bba` | 93,519,317 | `3aea299a264462a47a022975e06ff2635f53c7ba5fd4f6763605944104321fcf` |
+| `chipdb-GW5AST-138C.bin` | 34,230,238 | `27d66481762e9facbe9c3a39c84c8d9e335769823f84816574a3607ae5335020` |
+
+The `.bin` is that `.bba` compiled by the build's own `bbasm`.
+
+Two traps in the suite's Python that cost time here and are not obvious from
+the error: `nextpnr`'s embedded interpreter wants `PYTHONHOME` pointed at the
+bundle, and `save_chipdb` — and so `chipdb_builder` above — needs `msgspec`,
+which the bundle does not ship.
+
+## The examples: apicula's own
+
+The fork carries the same examples as upstream:
+
+```bash
 cd apicula/examples/gw5a
 make tangconsole138k      # → uart-message-tangmega138k.fs
 make tangmega138k         # → big-shift-…, attosoc-…, uart-message-…
@@ -46,19 +139,11 @@ make tangmega138k         # → big-shift-…, attosoc-…, uart-message-…
 
 `examples/gw5a/Makefile` and `examples/gw5a/tangconsole138k.cst` are the
 authoritative source for the exact device strings and pin constraints; the
-script in `scripts/` wraps them.
+scripts in `scripts/` wrap them.
 
 `make` deletes the intermediate `*-…json` after packing. `nextpnr` can be re-run
 alone when a variant is wanted (for example to re-pack compressed with
 `gowin_pack -c`).
-
-## Building a device database yourself (not needed)
-
-The chipdb is built from Gowin's own `.dat` files, which live in a vendor IDE
-install. Apicula's CI does it inside a Docker image (`pepijndevos/apicula:1.9.10.03`)
-and publishes the result in its PyPI package, so this path is only for someone
-who wants to regenerate the database — set `GOWINHOME` to a Gowin install and
-run Apicula's build. The published database is what was used here.
 
 ## Board side
 
