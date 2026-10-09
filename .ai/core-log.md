@@ -820,3 +820,35 @@ Load the bitstream at `bb5d01cc...` and look at the display, which is the test t
 - User Test: N/A
 
 ---
+
+## 28 COMMIT Unreleased 2026-10-09T09:45:28-07:00
+
+#### Coming From:
+
+Unreleased 797e5bb
+
+#### Purpose:
+
+Put a visible output in front of the user for the first time -- eight LEDs driven by a bitstream this repository built -- and record the run beside the UART report that verifies it.
+
+#### Outcome:
+
+The board now shows the open toolchain working, and the run is verified two ways at once. `scripts/build-clock-smoke.sh` was repaired first, because it defaulted its output directory, its nextpnr directory and its Python dependency directory into `/tmp` and had already lost this design's only bitstream to a reboot once: they now point at `/home/vash/tools/clock-smoke`, `/home/vash/tools/nextpnr-mathieufro` and `/home/vash/tools/pydeps`, the script refuses oss-cad-suite's nextpnr by path with the reason written out, and it fails clearly when the Python dependencies are absent. Rebuilding through it produced a bitstream byte-identical to the one `evidence/clock-smoke-readout.txt` recorded before this cycle's changes -- `78227dd6...` at 34,668,145 bytes -- where an expectation recorded earlier in the cycle had said the change to the device database would necessarily move the hash; the prediction was wrong and the reason is the better result: the lane constraint only removes HCLK arcs an IOLOGIC may use for its fast clock, this design has no OSER10 and so no IOLOGIC that selects a lane, so its placement, routing and packed output are untouched. That is the change demonstrated behaviour-preserving for a design with no IOLOGIC FCLK rather than argued, and it also rules out the desktop core's dark display being caused by the edit perturbing placement. The bitstream was then loaded over the MCU port in the one-wire arrangement and captured twice off `/dev/ttyUSB1` at 115200: 46 lines over 31 seconds and 23 over 15, `lock=11` on every one of both, no sample skipped and every line-counter step exactly one period, `sys_clk` 49.9968 MHz from the UART anchor in both, `clk27` 1.0800 and `hclk` 2.9701 times `sys_clk`, the two runs agreeing to about three parts in 10^5 and carrying the same counter values at the same line index (`n=0007` reads `c27=7907 hk=4cd1` in both), which makes the design deterministic from reset across separate loads. The doubled clock rates are not new: `clock_smoke.v` carries `defparam pll_27.ODIV0_SEL = 50` and `evidence/clock-smoke-divider-runs.txt` records that 50 divides by 25 where 100 divides by 50, so 54 and 148.5 MHz are what this committed design reports and hclk5 follows at 742.5 rather than 371.25, while the desktop core's own pll_27 asks for 100. With an 8-LED PMOD in PMOD1 the user then reported LEDs 1, 2 and 5 blinking and 3, 4, 6, 7 and 8 dark, and against the lane order this project records for the dock -- lanes 0-7 on module pins 1, 2, 3, 4, 7, 8, 9 and 10, interleaved onto IO0/2/4/6 and IO1/3/5/7 -- the three blinking are exactly the three counter lanes including the non-adjacent lane 4 read as LED5, a set that cannot match by accident, so if the module's own LEDs run in lane order then the dock's interleave is confirmed on hardware for the first time; the module was not identified, and that assumption is the one thing the reading rests on and is written down as such. The two dark LEDs are the two pins the design holds steadily high, the PLL lock bits, which makes this module active-low -- an LED lights when its pin is driven low -- so those two are dark precisely because both PLLs are locked, the same fact the UART reports as `lock=11` read by eye instead of by tool, and it also explains the power-on state the user reported, all eight lit with nothing loaded, since a ball with no design on it reads low; an expectation recorded earlier in the cycle said the three undriven lanes would stay lit and five would be steady, which was the opposite polarity and was wrong, and the user's observation corrected it. What this does NOT establish is anything about the display: this design drives no TMDS and its screen output is blank by construction, so the desktop core's dark screen and its two unresolved candidates, the fabric-versus-dedicated clock path and the serialiser attribute difference, are untouched and remain in sections 18 and 19 of `evidence/desktop-clock-routing.txt`. Nor are the three blink rates measured: they follow from the counters and the doubled rates at 1.49, 3.22 and 4.43 Hz, and the user read the three as similar rates with phase offsets rather than as rates two to three times apart, which is worth a re-look and is not a finding. The run is recorded in `evidence/clock-smoke-led-and-uart.txt` with the artifact digest, both decodes, the lane table, the module-order caveat and the reproduction commands. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 28 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Settle what the LED observation was allowed to claim by identifying the 8-LED module and confirming that its LEDs run in lane order, because the dock's interleave only becomes measured once that assumption is closed; everything else in section 3 of `evidence/clock-smoke-led-and-uart.txt` is already hardware-backed. Re-read the three blink rates while the design is loaded, since rates two to three times apart and three similar rates with phase offsets cannot both be true, and the answer distinguishes a perception artifact from a divider problem. Then return to the display, which is where this project's purpose still sits: the two candidates recorded in sections 18 and 19 are the fabric-versus-dedicated clock path at the HCLK block, where ours still arrives over fabric and the working vendor build uses the dedicated inter-HCLK wire, and the serialiser attribute difference, which needs comparing at the fuse level at the three TMDS tiles rather than as attribute lists because the decoder aliases `FCLKSEL` values. `scripts/build-clock-smoke.sh` and the durable paths under `/home/vash/tools` are now the instruments for that, and any re-run must regenerate the device database, the architecture and the packer's tables together.
+
+#### Files Modified:
+
+- scripts/build-clock-smoke.sh
+- evidence/clock-smoke-led-and-uart.txt
+- FINDINGS.md
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

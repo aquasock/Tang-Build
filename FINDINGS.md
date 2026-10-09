@@ -204,12 +204,14 @@ settle it outright.
    `FCLKSEL` values onto the same fuses, so an attribute-list difference is not
    evidence of a fuse difference.  If the display is still dark, compare the
    fuses at the three TMDS tiles before changing what the packer emits.
-2. `scripts/build-clock-smoke.sh` still defaults its build to `/tmp/tb/...`,
-   which has already cost one bitstream to a reboot.  `scripts/pnr-desktop.sh`
-   was fixed in the same way and this one was not; point it somewhere durable.
-   The nextpnr binary and the device database must also be regenerated
-   together: `gowin_pack` loads the chipdb at pack time, so a routed netlist
-   and a database from different apicula revisions do not pack.
+2. `scripts/build-clock-smoke.sh`'s `/tmp` defaults are repaired — its output
+   directory, its nextpnr directory and its Python dependency directory now
+   point at durable paths under `/home/vash/tools`, and it refuses
+   oss-cad-suite's nextpnr by path with the reason spelled out.  The caution
+   that remains is the revision coupling: `gowin_pack` loads the chipdb at pack
+   time, so the nextpnr binary and the device database must be regenerated
+   together, and a routed netlist from an older architecture does not pack
+   against a newer database.
 3. The core itself needs no change for any of the above, and should not be
    rebuilt until the route works.
 

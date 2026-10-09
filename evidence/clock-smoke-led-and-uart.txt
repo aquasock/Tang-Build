@@ -1,0 +1,154 @@
+# clock-smoke on the board: a visible output and a verified UART report
+
+# Design:   fpga/clock-smoke/clock_smoke.v
+# Built:    scripts/build-clock-smoke.sh, repaired this cycle: the output
+#           directory, the nextpnr directory and the Python dependency directory
+#           all defaulted into /tmp, which is how this design's only bitstream
+#           was once lost to a reboot.  They now default to
+#           /home/vash/tools/clock-smoke, /home/vash/tools/nextpnr-mathieufro and
+#           /home/vash/tools/pydeps, the script refuses oss-cad-suite's nextpnr
+#           by path with the reason spelled out, and it fails clearly when the
+#           Python dependencies are missing.
+# Bitstream: 34,668,145 bytes
+#          sha256 78227dd66d75521230be62e1efbc1d2ba84119ebad993ac6aa4c8701820f23ea
+# Loaded:   openFPGALoader -b tangconsole, one-wire (MCU port 0403:6010), SRAM,
+#           IDCODE 0x1081b, erase + load to 100%, DONE.  Volatile: a power
+#           cycle or the reconfig button returns the board to its flash core.
+# Captured: /dev/ttyUSB1 at 115200, twice, 31 s and 15 s
+# Observed: with an 8-LED PMOD in PMOD1, the user reports LEDs 1, 2 and 5
+#           blinking and LEDs 3, 4, 6, 7 and 8 dark.
+
+==================================================================
+1. The rebuild is byte-identical to the pre-change build, which was not expected
+==================================================================
+
+The hex digest above is the one evidence/clock-smoke-readout.txt recorded before
+any of this cycle's changes, so the same design, built again through the
+repaired script against the changed device database and a nextpnr rebuilt from
+it, produced the same 35.7-million-bit file.  A prediction recorded earlier in
+this cycle -- that the hash would necessarily change because the database and
+the architecture had -- was WRONG, and the measurement is the better answer.
+
+The reason is worth keeping: the change to apycula constrains which HCLK lanes
+an IOLOGIC's fast clock may come from (patches/0003), and this design contains
+no OSER10 and therefore no IOLOGIC that selects a lane at all.  The removed
+arcs were never on its router's path, so its placement, its routing and its
+packed output are untouched.  That makes the change behaviour-preserving for a
+design with no IOLOGIC FCLK, demonstrated rather than argued -- and it also
+means the desktop core's dark display cannot be blamed on the edit perturbing
+placement.
+
+==================================================================
+2. The UART report: the design runs, and both PLLs lock
+==================================================================
+
+Two captures, decoded with tools/decode-clock-smoke.py:
+
+  capture   window   lines   d(n)          PLL lock bits
+  1         31.0 s   46      {1: 45}       11 x46
+  2         15.0 s   23      {1: 22}       11 x23
+
+Both report `lock=11` on every line, both use every sample and skip none, and
+every line-counter step is exactly one line period.  sys_clk, from the UART
+anchor of 434 x 115200 baud, is 49.9968 MHz in both -- the 50 MHz crystal.
+
+  clk27   1.0800 x sys_clk  (53.9967 MHz)   capture 1
+          1.0800 x sys_clk  (53.9966 MHz)   capture 2
+  hclk    2.9701 x sys_clk  (148.4947 MHz)  capture 1
+          2.9700 x sys_clk  (148.4907 MHz)  capture 2
+
+The two runs agree to about three parts in 10^5, and the second is not merely a
+re-measurement: at line n=0007 the counters read `c27=7907 hk=4cd1` in both,
+the same values at the same line index, so the design is deterministic from
+reset across separate loads.
+
+clk27 and hclk both read DOUBLE their design values, and that is not a fault of
+this cycle.  `fpga/clock-smoke/clock_smoke.v` carries
+`defparam pll_27.ODIV0_SEL = 50`, and evidence/clock-smoke-divider-runs.txt
+records that on this die the request is effectively halved: 50 divides by 25
+where 100 divides by 50.  So 54 MHz and 148.5 MHz are what this committed
+design is supposed to report, `pll_hdmi`'s separate divider is correct in the
+same runs, and hclk5 follows at 742.5 MHz rather than 371.25.  The desktop
+core's own pll_27 does not carry that value: its netlist asks for ODIV0_SEL=100,
+the workaround the earlier cycles landed.
+
+==================================================================
+3. The LED observation, and what it confirms
+==================================================================
+
+clk_smoke's lane order is Digilent pin order, lanes 0-7 being module pins
+1, 2, 3, 4, 7, 8, 9 and 10 (Tang-Phosphor src/pmod/pmod_slot.sv), and
+`pmod_slot.sv` interleaves that onto the dock's IO numbering as IO0/2/4/6 on
+lanes 0-3 and IO1/3/5/7 on lanes 4-7.  Against what this design drives:
+
+  lane  module pin  what drives it          LED   observed
+  0     1           pmod1_io0 = cnt_sys[24]  1    BLINK  (~1.49 Hz)
+  1     2           pmod1_io2 = cnt_hclk[24] 2    BLINK  (~4.43 Hz)
+  2     3           pmod1_io4 = lock_hdmi    3    dark
+  3     4           pmod1_io6, not driven    4    dark
+  4     7           pmod1_io1 = cnt_27[23]   5    BLINK  (~3.22 Hz)
+  5     8           pmod1_io3 = lock27       6    dark
+  6     9           pmod1_io5, not driven    7    dark
+  7     10          pmod1_io7, not driven    8    dark
+
+The three blinking LEDs are exactly the three counter lanes, in module order,
+INCLUDING the non-adjacent lane 4 read as LED5 -- a set that cannot match by
+accident.  IF the module's LEDs run in lane order, as Digilent's 8-LED Pmod
+does with its LD0..LD7, then this is the first hardware confirmation of the
+dock's interleave, which until now came from Tang-Phosphor's records and the
+schematic.  The module in use was not identified, and that assumption is what
+the reading rests on; it is the one thing to close before calling the mapping
+measured.
+
+The two dark LEDs are the two pins the design holds STEADY HIGH, the PLL lock
+bits.  That makes this module active-LOW: an LED lights when its pin is driven
+low, so those two are dark precisely because both PLLs are locked.  It is the
+same fact the UART reports as `lock=11`, read by eye instead of by tool.
+
+It also explains the power-on state the user reported -- all eight LEDs lit
+with nothing loaded -- because a ball with no design on it reads low, so an
+active-low module lights all eight.  An expectation recorded earlier in this
+cycle, that the three undriven lanes would stay lit and five would be steady,
+was the OPPOSITE polarity and was wrong; the user's observation corrected it.
+
+==================================================================
+4. What this establishes, and what it does not
+==================================================================
+
+Establishes: a bitstream built by this repository's own tools runs on this
+board, has now been seen to drive eight external LEDs, and reports its own
+clocks and both PLL lock bits over a UART link, twice, with the two runs
+agreeing to three parts in 10^5.
+
+Establishes, as a by-product: the lane constraint in patches/0003 is
+behaviour-preserving for a design with no IOLOGIC FCLK -- the same bitstream,
+byte for byte.
+
+Does NOT establish: anything about the HDMI display.  This design drives no
+TMDS and its screen output is blank by construction; it is a clock instrument,
+not a display test.  The desktop core's dark display remains open, with the
+fabric-versus-dedicated clock path and the serialiser attribute difference both
+unresolved -- see sections 18 and 19 of desktop-clock-routing.txt.
+
+Does NOT establish: that the dock's interleave is measured, until the LED
+module's own ordering is confirmed (section 3).
+
+Does NOT establish: the three blink rates as measured.  They follow from the
+counters and the doubled clock rates (1.49, 3.22 and 4.43 Hz at the design's
+divider values), and the user read the three as similar rates with phase
+offsets rather than as rates 2-3x apart.  Worth a re-look, not a finding yet.
+
+==================================================================
+5. Reproducing this
+==================================================================
+
+  bash scripts/build-clock-smoke.sh            # ~1 min, leaves the .fs in
+                                               # /home/vash/tools/clock-smoke
+  openFPGALoader -b tangconsole /home/vash/tools/clock-smoke/clock-smoke.fs
+  stty -F /dev/ttyUSB1 115200 raw -echo
+  timeout 31 cat /dev/ttyUSB1 > capture.bin
+  python3 tools/decode-clock-smoke.py capture.bin --seconds 31
+
+The load needs the MCU port, i.e. the one-wire arrangement, and is volatile.
+An 8-LED PMOD in PMOD1, the socket beside the HDMI port, shows the result: three
+blinking at three different rates and five dark, the two lock lanes among them.
