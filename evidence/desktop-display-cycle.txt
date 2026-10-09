@@ -1,0 +1,101 @@
+# desktop core: packing it, and why the display is still dark
+
+## 1. The flow fix -- string parameters from the slang front end
+
+The desktop core could not pack at all.  Cause, measured by comparing the
+two netlists' pll_27 PLL cells:
+
+                  clock-smoke (packs)   desktop (failed)
+  FCLKIN          50                    0011010100110000      <- ASCII '50'
+  CLKOUT0_EN      TRUE                  01010100010100100101010101000101  <- 'TRUE'
+  CLKFB_SEL       INTERNAL              0100100101001110...   <- 'INTERNAL'
+  MDIV_SEL/ODIV0_SEL   binary           binary                (same both)
+
+read_slang keeps a Verilog *string* parameter as a bit vector where
+read_verilog keeps it a string.  gowin_pack wants the strings: float() on
+the first gives 1.1e13 (the exception text 11010100110000.0 is that,
+leading zeros stripped) and the second raises KeyError in pll_attrvals.
+
+The fix in scripts/synth-desktop.sh converts them back.  It is scoped to
+PLL-family cells, and that scope is load-bearing: a first attempt applied
+the 'does this decode to printable text' test to the whole netlist and would
+have converted 536 parameters, including LUT INIT values --
+desktop_sockets.hs_LUT4_I1.INIT = '_3'.  It would have silently corrupted
+the design's lookup tables.  It did not run, which was luck.  PLL numeric
+fields are 32-bit, so a realistic divider leaves its high bytes 0x00 and
+cannot decode as text; that is why the scope makes it safe.
+
+Result: 'PLL string parameters restored (129)' -- 43 x 3 PLLs, exactly the
+string set the library declares.
+
+## 2. The packer fix -- LSRIMUX_0 on an output serialiser
+
+GW5AST_138C.get_out_iologic_attrs added the fast-clock selection and the
+OSER16 aux attributes but never removed LSRIMUX_0.  LSRIMUX belongs to the
+INPUT half (against the output's LSROMUX), so an output cell carrying it
+spends a fuse the vendor does not -- 'LSRIMUX_0 ours set, theirs clear, one
+fuse per tile', the only difference this project ever found between our
+bitstream and the vendor's working one, and it is at the TMDS tiles, which
+are OSER10s.  Fixed by dropping that attribute on the output path.
+
+Re-packing moved 14 bits of 35.7M, every cluster 0 -> 1, in the TMDS region:
+  [34633209] 0->1   [34633233] 0->1   [34633834] 0->1   [34634646..647] 00->11
+  plus the checksum tail.  Fuses we were spending, cleared.
+
+## 3. Hardware
+
+Three loads of /tmp/tb/desktop-lsrimux.fs (35,752,331 B, sha256 ec6baf2a...),
+each after a power cycle so the load takes (a load without one does not).
+  load 1  monitor: same as before, flash splash then dark, screen sleeps
+  load 2  monitor: same, user watched the transition closely
+  load 3  a different, better monitor: 'no signal right away', went to sleep,
+          and two quick flashes seen after the load
+
+The two flashes are the JTAG reconfigure releasing and settling, not video.
+'No signal' from a monitor that distinguishes it from 'out of range' means
+NO TMDS CLOCK AT ALL -- not timings it cannot use, but nothing.
+
+## 4. What the day ruled out
+
+  - the pixel clock.  The committed build runs it at 148.5 MHz (the doubled
+    divider) and this build at 74.25; both give no signal.
+  - the serialiser fuses, now that LSRIMUX_0 is cleared.
+  - the placement.  Our routed build has div5 at X181Y81/CLKDIV_3 (block 3,
+    not the dead blocks 0/1), the three PLLs on the reference sites X0Y45,
+    X1Y81, X32Y108, and the OSER10s at X181Y102/100/57 -- the vendor's own.
+  - the CLKDIV and its lane: clock-smoke measured hclk at 74.2452 MHz from
+    that exact site.
+
+## 5. Also established this cycle
+
+  Gowin's IP Generator record beside the wrapper (src/pll/gowin_pll_27.ipc)
+  settles the ODIV question: ClkinClockFrequency=50,
+  ClkfboutVCODivideFactorStatic=27, Clkout0VCODivideFactorStatic=50,
+  Clkout0ExpectedFrequency=27.  ODIV0_SEL = 50 means divide-by-50.
+
+  The ODIV field occupies 48 bits in six groups of eight at a 1,584-bit
+  stride -- six tiles of the PLL site -- and is not a positional binary
+  divide: a sweep over ODIV0_SEL = 4, 8, 16, 32, 64, 100 gave seven distinct
+  bitstreams with the groups behaving like a coarse cascade plus a fine value.
+
+  The packer's rejection of ODIV0_SEL = 100 on the desktop IP was not about
+  the divider: get_pll_attrvals does float() on A_FCLKIN, which is the cell's
+  FCLKIN verbatim, and the slang front end had made it the ASCII of '50'.
+  Fixed in the flow (section 1), not by making the packer lenient.
+
+## 6. Open
+
+  - the display is still dark.
+  - the packer's divider scaling is unfixed: the requested ODIV still means
+    half to the hardware for the values measured.  ODIV0_SEL = 100 is a
+    workaround in the RTL, not a correction.
+  - why no TMDS clock is emitted is not known.  The desktop core has no
+    readout, so its clocks cannot be measured; the next instrument is to put
+    the display chain into clock-smoke, which reports over the board's own
+    proven UART, and see whether a monitor syncs to that.
+  - scripts/pnr-desktop.sh needs fixing: it takes whatever
+    nextpnr-himbaechel is first on PATH (the suite's, which has no placeable
+    PLL bel), needs SYNTH_DESKTOP_NO_ENV and the suite environment sourced,
+    and needs the three INS_LOC PLL pins.
+  - the fork's gowin_pack.py fix is a change in the apicula fork, not in
+    this repository.

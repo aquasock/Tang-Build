@@ -212,6 +212,55 @@ then
     exit 1
 fi
 
+# ------------------------------------- string parameters back to strings --
+# `read_slang` keeps a Verilog *string* parameter as a bit vector, where
+# `read_verilog` keeps it a string, so a design through this front end reaches
+# `gowin_pack` carrying the ASCII of "50" and "TRUE" instead of those strings.
+# MEASURED: clock-smoke, synthesised by plain `synth_gowin`, has
+# `FCLKIN = 50` and `CLKOUT0_EN = TRUE`; this flow's netlist has
+# `0011010100110000` and `01010100010100100101010101000101` for the same
+# `defparam`s.  The packer wants the strings and rejects the bit patterns --
+# `float()` on the former gives 1.1e13, and the latter raises a KeyError in
+# `pll_attrvals` -- which is what stopped this core packing at all.
+#
+# The cell library states which of the PLL's parameters are strings and which
+# are numbers (`cells_xtra_gw5a.v`: 43 of the former, `FCLKIN`, `CLKFB_SEL`,
+# `CLKOUT0..6_EN`, the `DYN_*` and `DE*_EN` flags; 51 of the latter, the
+# dividers and delay steps).  Converting is therefore restricted to PLL-family
+# cells, where it is safe by construction: a PLL's numeric parameters are
+# 32-bit, so a realistic divider leaves its high bytes 0x00 and cannot decode
+# as text.  A LUT is not safe -- `INIT` is 16 bits and some decode to printable
+# ASCII by chance, which is how a whole-netlist rule would silently corrupt
+# look-up tables -- so PLL-family cells are the scope, not the whole design.
+python3 - "$out" <<'PY'
+import json, sys
+
+PLL_TYPES = {"PLL", "PLLA", "rPLL", "PLLVR"}
+path = sys.argv[1]
+d = json.load(open(path))
+converted = []
+for m in d.get("modules", {}).values():
+    for cn, c in m.get("cells", {}).items():
+        if c.get("type") not in PLL_TYPES:
+            continue
+        parms = c.get("parameters")
+        if not parms:
+            continue
+        for k, v in list(parms.items()):
+            if not isinstance(v, str) or len(v) < 8 or len(v) % 8 or set(v) - set("01"):
+                continue
+            text = "".join(chr(int(v[i:i + 8], 2)) for i in range(0, len(v), 8))
+            if all(0x20 <= ord(ch) <= 0x7e for ch in text):
+                parms[k] = text
+                converted.append("%s.%s = %r" % (cn, k, text))
+if converted:
+    json.dump(d, open(path, "w"))
+    print("PLL string parameters restored (%d): %s"
+          % (len(converted), ", ".join(converted)))
+else:
+    print("PLL string parameters restored: none")
+PY
+
 # ...and a readable record of the primitives this design is known to need.
 python3 - "$out" nestang_top <<'PY'
 import json, sys

@@ -302,3 +302,33 @@ None.
 - User Test: NOT RUN
 
 ---
+
+## 11 COMMIT Unreleased 2026-10-09T00:33:58-07:00
+
+#### Coming From:
+
+Unreleased 6ac21dd
+
+#### Purpose:
+
+Make the desktop core pack and load with the divider changed, so that the display becomes the observable, and find out why it has never come up.
+
+#### Outcome:
+
+The desktop core packs now, and the display is still dark, but the day removed most of the field and named one real defect. Packing failed for a reason no one had looked for: `read_slang` keeps a Verilog *string* parameter as a bit vector where `read_verilog` keeps it a string, so this flow's netlist reached `gowin_pack` carrying the ASCII of "50" and "TRUE" instead of those strings -- `FCLKIN = 0011010100110000` against clock-smoke's `FCLKIN = 50` for the same `defparam`. The packer wants the strings, and `float("0011010100110000")` is 1.1e13, which is the exception text this project had already seen, `11010100110000.0MHz`, leading zeros stripped. The diagnosis is exact because the exception was its own fingerprint. The fix is in `scripts/synth-desktop.sh` and its scope is load-bearing: a first attempt tested "does this value decode to printable text" over the whole netlist and would have converted 536 parameters including LUT `INIT` values such as `'_3'`, silently corrupting the design's lookup tables; it did not run, which was luck rather than design. Scoped to PLL-family cells it is safe by construction, because a PLL's numeric fields are 32-bit and a realistic divider leaves its high bytes 0x00, and it restores 129 parameters, 43 for each of three PLLs, matching the string set the cell library declares. Gowin's own IP record settled the ODIV question in the same pass: `src/pll/gowin_pll_27.ipc` says `ClkinClockFrequency=50`, `Clkout0VCODivideFactorStatic=50` and `Clkout0ExpectedFrequency=27`, so the requested divider means divide-by-50 and our 54 MHz is a packer fault, not a design one; a sweep of `ODIV0_SEL` over 4, 8, 16, 32, 64 and 100 showed the field occupying 48 bits in six groups of eight at a 1,584-bit stride, six tiles of the PLL site, and showed it is not a positional binary divide. The packer's refusal of 100 on the desktop IP was also not about the divider: `get_pll_attrvals` calls `float()` on `A_FCLKIN`, which is the cell's `FCLKIN` verbatim, and the front end had made that the ASCII of "50". A second, real defect was found and fixed in the fork: `GW5AST_138C.get_out_iologic_attrs` added the fast-clock selection and the OSER16 aux attributes but never removed `LSRIMUX_0`, which belongs to the input half against the output's `LSROMUX`, so every output serialiser was spending one fuse the vendor does not -- which is precisely the `LSRIMUX_0` difference this project recorded once and never explained, at the TMDS tiles, which are OSER10s. Re-packing moved 14 bits of 35.7 million, every cluster `0 -> 1`, in the TMDS region. On hardware the desktop core loaded three times, each after a power cycle, and the display stayed dark every time; on a better monitor that distinguishes the two, it reported "no signal" rather than "out of range", which means no TMDS clock at all rather than timings it cannot use. That, with the rest of the day, rules out the pixel clock, which was the working hypothesis the previous three cycles were built on: the committed build runs it at 148.5 MHz and this one at 74.25, and both give no signal. It also rules out the placement, which matches the vendor's at every clock and serialiser cell, and the CLKDIV and its lane, which clock-smoke measured at 74.2452 MHz from that exact site. What the observation exposes is a gap in the method rather than in the design: the desktop core has no readout, so its clocks cannot be measured and every question about them has to be asked by loading it and looking at a dark screen. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and `core-log.md` was, and validated this entry as number 11 of the active log with a conforming header, six sections in canonical order, prose in Outcome and Next Steps, and an allowed Status set. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Put the display chain into the design that can talk. clock-smoke reports over the UART this project has already proven on the board, and the desktop core reports nothing, so adding one `OSER10`, one `ELVDS_OBUF` and a TMDS clock lane to clock-smoke makes the serialiser path measurable: if a monitor syncs to that design, the serialiser works and the desktop core's fault is elsewhere, and if it does not, the fault is localised to a design whose clocks are known good rather than one that can only be stared at. Repair `scripts/pnr-desktop.sh` in the same cycle, since it silently uses the suite's nextpnr, which has no placeable PLL bel, and needs `SYNTH_DESKTOP_NO_ENV`, the suite environment sourced for the embedded interpreter, and the three `INS_LOC` PLL pins; it is the difference between a build that runs and one that stops at a wall that is no longer there. The divider scaling itself remains unfixed and `ODIV0_SEL = 100` remains a workaround written into the RTL, so the next cycle that touches the packer should correct the encoding rather than compensate for it. `evidence/desktop-display-cycle.txt` records all of the above, including the negative results, so that none of them has to be re-derived.
+
+#### Files Modified:
+
+- scripts/synth-desktop.sh
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: FAIL
+
+---
