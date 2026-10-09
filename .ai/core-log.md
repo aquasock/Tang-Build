@@ -117,3 +117,33 @@ None.
 - User Test: PASS
 
 ---
+
+## 5 COMMIT Unreleased 2026-10-08T20:53:06-07:00
+
+#### Coming From:
+
+Unreleased 30a7088
+
+#### Purpose:
+
+Record the controlled comparison that shows this project's bitstream does not drive the display, and correct the user test the previous entry recorded.
+
+#### Outcome:
+
+The previous entry's user test is superseded, and it recorded the wrong thing. A controlled comparison was run on the same board, monitor and `tang.ini`, with only the bitstream differing and each load followed by the same console output and a wait of at least thirty-five seconds: this project's build, `evidence/desktop-open.bin` at 4,463,286 bytes, produced no video on four loads, while the vendor's own desktop core from the card, `desktop.bin` at 4,463,306 bytes, produced video every time, showing TinyDesk's console with the commands just typed. The monitor was ruled out before the comparison rather than after it: it re-locks within seconds, the user waits at least thirty seconds before calling a mode absent, and the control was loaded following the fourth failure of ours, so both sides were measured under the same conditions. What the failure is not matters as much as what it is. It is not the keylink, because the core answers `core 84` on UART1 at 2000000 baud under both bitstreams, so the 21.5 MHz `clk` domain and the register file are working. It is not the TMDS IO configuration, because the IOB fuse set at all four TMDS pins was measured equal to the vendor's when this bitstream was built, ten fuses and ten shared. And it is not the OLED, which is dark under the vendor's core as well and which the user reports is unfinished in this project's own design, the desktop's 2x2 graphics mode having only worked since the previous day and the Tang-Phosphor core only ever having shown a colour screen; it cannot serve as an observable for a toolchain change and was carried as one for far too long. Two candidates remain. The first is timing on `hclk5` at 371.25 MHz, the clock this design feeds to the OSER10 serialisers and the only constrained clock nextpnr has never reported a maximum frequency for, because it drives IOLOGIC and never reaches a flip-flop pair. One observation of this bitstream did appear to work, the previous entry's TinyDesk and moving pointer, which followed a load with no power cycle between it and the observation, and one success against four failures is the signature of a marginal path rather than a wrong configuration. The second is the bitstream's option preamble, the one structural difference the two files are known to have: the vendor's carries a `dede` field and the multiboot, security-bit and CRC settings that `gowin_pack` is not being given, where ours reaches the `a5c3` marker twelve bytes earlier. The error being corrected is one of inference rather than measurement. The previous entry treated a load the agent had performed as proof of what was running when the user looked, and never verified it; the user asked for evidence before believing results and was right to, and the weakest link in an otherwise well-checked chain was that one unverified step. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and `core-log.md` was, and validated this entry as number 5 of the active log with a conforming header, six sections in canonical order, prose in Outcome and Next Steps, and an allowed Status set. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Separate the two candidates before rebuilding anything. The method that has already worked twice is to read a bitstream back and compare it with the vendor's at the sites that matter, and it applies here directly: unpack this project's bitstream and the vendor's and compare the three PLLs, the CLKDIV that divides `hclk5` down to `hclk`, and the OSER10 and IOLOGIC tiles, because a difference in the clock or serialiser configuration would name the fault outright while an exact match would leave timing as the explanation. This project's `.fs` is not committed, only its `.bin`, but the packing is one-to-one so the text form can be reconstructed from it and neither file needs the board. Timing can then be attacked by giving nextpnr something it can report on for that path, or by measuring the achieved delay through the serialiser clock, since the absence of any maximum frequency for `hclk5` is the reason this was never caught at build time and is the gap that let the previous entry's result stand. Only if both of those come back clean is the option preamble worth pursuing, and it is the most invasive of the three because it means changing what `gowin_pack` is asked to write. Nothing in this needs the board, and the board should be left as it is.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: FAIL
+
+---
