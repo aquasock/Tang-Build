@@ -229,6 +229,14 @@ alone when a variant is wanted (for example to re-pack compressed with
   openFPGALoader -b tangconsole <design>.fs       # SRAM load, volatile
   ```
 
+  **Power-cycle before every load.**  An SRAM load onto an already-running
+  design does not take effect: the board keeps behaving as the *previous*
+  bitstream, so a variant appears to change nothing or to change the wrong
+  thing, and that reads as a result rather than as a failed load.  Measured in
+  core-log entry 8, and again on 2026-10-09 where it produced a plausible
+  `hclk` reading for a design that cannot produce one.  Unplug and replug the
+  MCU cable, or press the reconfig button, before each `openFPGALoader` run.
+
   The two cables cannot be combined (the board's modules are powered from one
   input or the other), so programming the FPGA from a host and running TinyTang
   are mutually exclusive arrangements.

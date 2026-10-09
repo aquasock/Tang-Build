@@ -1,0 +1,166 @@
+# clock-smoke as an eight-lane chaser, and the hclk anomaly it exposed
+
+# Design:   fpga/clock-smoke/clock_smoke.v, all eight PMOD1 lanes driven
+# Built:    scripts/build-clock-smoke.sh
+# Bitstream: 34,668,145 bytes
+#          sha256 6552c352ba524e3f1d2415ac6e81398af3e195ea2849d882d096211fabf780e5
+#          (an earlier build of the same chaser drove the lit lane LOW and is
+#          0bd6341516805b1582442ef7fcfdbf6f16ad4678b5e682cccc4c9a24c275dfe9)
+# Loaded:   openFPGALoader -b tangconsole, one-wire (MCU port 0403:6010), SRAM,
+#           erasing and loading to 100% and reporting DONE -- after a power
+#           cycle each time, which section 5 shows is not optional.
+# Captured: /dev/ttyUSB1 at 115200
+# Observed: the user's report on both builds: a marker travels LED 1 -> 8 in
+#           order and then repeats.  Dark in the first build, lit in the second.
+
+==================================================================
+1. What the chaser is, and why it replaces the five per-clock lanes
+==================================================================
+
+All eight PMOD1 lanes are driven, one at a time, so a single marker walks the
+module at 4 steps a second -- a lap takes 2 s and every lane blinks at 0.5 Hz.
+The step is counted in the `sys_clk` domain, so it is independent of every PLL
+in the design and cannot be confused with a clock report.
+
+It was built for two reasons.  The first is that a travelling marker makes the
+module's lane ORDER readable by eye, and a direction of travel cannot be
+mistaken -- which is what turns the dock's row interleave from a sourced claim
+into a measured one.  The second is that this is the first output of this
+project a person can recognise, which a UART line is not.
+
+What it gives up is the meter reading of `cnt_sys`, `cnt_27`, `cnt_hclk` and the
+two lock bits that the previous version exposed on five lanes.  The UART keeps
+all of that and better -- the counters are still in the design and still read by
+the report, only their pins are gone -- which is why losing them costs nothing
+that is not already recorded.
+
+==================================================================
+2. The lane order is confirmed on hardware
+==================================================================
+
+The chaser drives module lane n on IO0/2/4/6 for n = 0-3 and IO1/3/5/7 for
+n = 4-7, i.e. straight through the dock's interleave, so lane order is what
+produces an in-order walk.  The user reports the marker travelling 1 -> 2 -> ...
+-> 8 and then repeating.
+
+That is the first hardware confirmation of the interleave `PMOD-001` and
+Tang-Phosphor's `pmod_slot.sv` record, and it retires the one assumption
+`evidence/clock-smoke-led-and-uart.txt` section 3 rested on -- that the module's
+own LEDs run in lane order.  They do: an out-of-order or jumped walk would have
+shown the assumption to be false, and the walk is in order.
+
+==================================================================
+3. The polarity, and a correction to clock-smoke-led-and-uart.txt
+==================================================================
+
+The module lights when its lane is driven HIGH, not LOW.
+
+Measured by the chaser, which is the cleaner instrument because the driven lane
+is known by construction: with the lit lane driven LOW the user saw a HOLE
+travelling and the other seven lit; with the lit lane driven HIGH the user saw
+a lit marker travelling.  LOW therefore means dark.
+
+`evidence/clock-smoke-led-and-uart.txt` section 3 concludes the opposite -- that
+the module is active-low -- from the two PLL lock lanes being dark while their
+pins were high.  That reading is now wrong somewhere, and the most likely place
+is the observation rather than the pin state: `lock27` and `lock_hdmi` are
+active-high and the report drives '1' for them, so lanes 2 and 5 were driven
+high and, on this module, should have been LIT.  Either those two LEDs were
+misread at a glance among eight, or those two lanes were not in fact driving.
+What is not in doubt is the chaser's measurement, so that is what the design
+follows.  This also explains the power-on state the user reported: a ball with
+no design on it reads high, so an active-high module lights all eight.
+
+The lesson is the project's own, recorded twice before and now a third time:
+a claim generalised from a glance at one or two cells is not a measurement, and
+the instrument that drives a known value is worth more than the one that infers
+it from what is seen.
+
+==================================================================
+4. The hclk anomaly: the CLKDIV's output does not toggle in this design
+==================================================================
+
+The UART reports both PLL lock bits set and `clk27` running, and reports the
+`hclk` count as exactly zero, in the same design and on the same board whose
+predecessor reported 148.5 MHz.  Every capture in this session, in order:
+
+  capture                design        load state        hclk
+  uart-clocksmoke.bin    pre-chaser    after power cycle 2.9701 x sys_clk
+  uart-clocksmoke2.bin   pre-chaser    after power cycle 2.9700 x sys_clk
+  uart-chase.bin         chaser (hole) NO power cycle    2.5874 x sys_clk  <- discarded
+  uart-chase2.bin        chaser (hole) after power cycle 0.0000 x sys_clk
+  uart-chase3.bin        chaser (lit)  after power cycle 0.0000 x sys_clk
+
+The third row is the load the user stopped: without a power cycle the board was
+in an indeterminate state and its numbers are not evidence, which is why they
+are marked discarded rather than counted.  Excluding it, the pattern is clean:
+two pre-chaser loads measure `hclk`, and two chaser loads -- two different
+builds, each loaded after its own power cycle -- do not.
+
+What was checked in the routed netlist, rather than inferred:
+
+  div5.HCLKIN   <- hclk5
+  div5.CLKOUT   -> hclk
+  hclk              clocks 25 counter flops
+  cnt_hclk[12]      driven by a flip-flop whose clock net is hclk
+  that bit          feeds the sampler that feeds the `hk=` field
+
+So the design states that `hclk` must toggle and be counted, and the count is
+zero.  The counter's upper bits losing their pin consumer this cycle is not the
+explanation: bit 12 is the bit that is read, it is still driven by an
+`hclk`-clocked flop, and nextpnr still constrains `hclk` and reports endpoints
+for it.
+
+What follows is measured: the CLKDIV's output is not toggling on silicon in
+this design.  What is inferred, and is the reason this is worth recording, is
+that `hclk5` reaches the CLKDIV over the general-fabric fallback after its one
+`Failed to route ... using dedicated routing`, and that this fallback is
+fragile enough to be broken by an unrelated change to the I/O -- adding three
+more driven lanes and a small amount of `sys_clk` logic.  That inference is not
+established.  What is established is that this design can measure it, and that
+the symptom is machine-readable: a counter that stops, rather than a screen
+that stays dark.
+
+That matters because it is the desktop core's open candidate in miniature.
+Section 18 of `desktop-clock-routing.txt` records that the working vendor build
+drives lane 0 of the HCLK block from the dedicated inter-HCLK wire while ours
+arrives over fabric, and section 19 leaves it open whether that or the
+serialiser attribute difference is why no TMDS leaves the part.  A small design
+in which a `371.25 MHz`-to-`74.25 MHz` division either works or does not, with a
+UART to say which, is the instrument that question has been missing.
+
+==================================================================
+5. Loading requires a power cycle, and TOOLCHAIN.md did not say so
+==================================================================
+
+An SRAM load onto an already-running design does not take effect.  This was
+measured in core-log entry 8 and interpreted there: with the board not power
+cycled, a load is read as the PREVIOUS bitstream's behaviour, so a variant
+appears to change nothing or to change the wrong thing.  It bit this session
+anyway -- the `uart-chase.bin` row above is exactly that, and it produced a
+plausible-looking 2.5874 x sys_clk that would have been written up as a finding
+had the user not stopped the capture and pointed out that no reboot had
+happened.
+
+`TOOLCHAIN.md`'s board-side section documents the one-wire load and that it is
+volatile, but not that a power cycle precedes every load.  That is now recorded
+there, because a hazard that costs a false measurement is worth more than the
+paragraph it costs to write down.
+
+==================================================================
+6. What is open
+==================================================================
+
+- Whether the chaser's hclk failure is the fabric fallback (section 4).  The
+  discriminating test is cheap and offline-ish: build a variant that keeps the
+  chaser but drives only the original five lanes, leaving IO5/6/7 unconsumed.
+  If `hclk` returns, the extra driven lanes are the disturbance; if it does not,
+  the chaser logic is.  Either answer narrows what the fabric fallback is
+  sensitive to, and neither needs a new question asked of the user.
+- Whether the three blink rates of the pre-chaser design were 2-3x apart, as
+  the counters and the doubled divider rates imply, or as similar as the user
+  first read them.  The chaser does not answer this and does not need to; it is
+  recorded as open in `clock-smoke-led-and-uart.txt` section 4 and stays open.
+- The display, which is what all of this is for.  Sections 18 and 19 of
+  `desktop-clock-routing.txt` remain the handoff, and section 4 above is now the
+  best instrument for the half of it that concerns the clock.

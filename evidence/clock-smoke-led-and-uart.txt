@@ -76,6 +76,12 @@ the workaround the earlier cycles landed.
 3. The LED observation, and what it confirms
 ==================================================================
 
+CORRECTED: the polarity conclusion below is WRONG.  A later measurement with
+clock-smoke driving one lane at a time shows this module lights on HIGH, not
+low -- see `evidence/clock-smoke-chaser.txt` section 3 for the measurement and
+for what the correction implies.  The mapping table and the lane-order reading
+below are unaffected and stand.
+
 clk_smoke's lane order is Digilent pin order, lanes 0-7 being module pins
 1, 2, 3, 4, 7, 8, 9 and 10 (Tang-Phosphor src/pmod/pmod_slot.sv), and
 `pmod_slot.sv` interleaves that onto the dock's IO numbering as IO0/2/4/6 on

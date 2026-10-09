@@ -22,9 +22,11 @@
 // PMOD1_IO0 (W19), PMOD1_IO1 (W20), PMOD1_IO2 (F19), PMOD1_IO3 (F20) and
 // PMOD1_IO4 (E22) on the PMOD1 header.  The console has no FPGA-driven LED at
 // all -- its one status LED, `LED1`, is wired to the FPGA's dedicated READY and
-// DONE configuration nets and to SYS_ACT, none of which fabric drives.  Those
-// five balls are still driven here, under their real names, so a meter or a
-// spare LED on the PMOD1 header reads them; but the instrument is the UART.
+// DONE configuration nets and to SYS_ACT, none of which fabric drives.  All
+// eight of those balls are driven here instead, under their real names, as an
+// eight-lane chaser on the PMOD1 header -- see the chaser block at the end of
+// this file for why, for its polarity, and for what it trades away.  The
+// instrument remains the UART, which the chaser does not touch.
 //
 // The UART is clocked by `sys_clk` alone, so it keeps reporting even if every
 // PLL is dead -- which is exactly the case worth being able to see.  It sends
@@ -65,7 +67,10 @@ module clock_smoke (
     output wire pmod1_io1,
     output wire pmod1_io2,
     output wire pmod1_io3,
-    output wire pmod1_io4
+    output wire pmod1_io4,
+    output wire pmod1_io5,
+    output wire pmod1_io6,
+    output wire pmod1_io7
 );
 
     wire gw_vcc;
@@ -413,19 +418,71 @@ module clock_smoke (
 
     assign uart_tx = tx_busy ? frame[bit_idx] : 1'b1;
 
-    // ------------------------------------------------------- PMOD1, for a meter
+    // -------------------------------------- PMOD1: an eight-lane chaser
     //
-    // These five balls are the ones the first version of this design drove as
-    // `led[0..4]`.  They are PMOD1_IO0..IO4, so with nothing on the header they
-    // are simply unread -- which is why the UART above carries the evidence.
-    // They are kept, under their real names, so that a meter or a spare LED on
-    // the header still reads the two slow divides and the two locks.
+    // All eight lanes are driven, and one of them at a time is LOW, so a single
+    // lit LED travels 1 -> 8 -> 1.  Two reasons this replaced the five
+    // per-clock outputs the earlier versions carried:
+    //
+    //   * the travelling dot makes the module's lane order readable by eye.  A
+    //     direction of travel cannot be mistaken, so this is what turns the
+    //     dock's row interleave -- lanes 0-3 on module pins 1-4 and lanes 4-7 on
+    //     pins 7-10 -- from a sourced claim into a measured one;
+    //   * it is the first output of this project that a person can recognise,
+    //     which a UART line is not.
+    //
+    // What it gives up is the meter reading of cnt_sys, cnt_27, cnt_hclk and the
+    // two lock bits, which the earlier five lanes exposed.  The UART keeps all
+    // of that and better: the counters are still here and still read by the
+    // report, only their pins are gone.
+    //
+    // POLARITY, measured 2026-10-09 with an 8-LED PMOD in PMOD1, twice and in
+    // the second case decisively: the lane this design drives LOW is the DARK
+    // one, and the seven it drives HIGH are lit, so the module lights when its
+    // pin is driven HIGH.  The chaser is what settles it, because it drives
+    // exactly one lane low at a time and the user could see which one went out.
+    //
+    // An earlier reading in this same cycle inferred the opposite from the two
+    // lock lanes being dark while their pins were high, and that inference is
+    // therefore wrong somewhere -- either those two LEDs were misread at a
+    // glance or their lanes were not in fact driving.  The chaser's evidence is
+    // the better one because the driver is known by construction, so this file
+    // follows the chaser: the lit lane is driven HIGH.
+    // `evidence/clock-smoke-led-and-uart.txt` section 3 records the earlier
+    // reading; the log entry after this one corrects it.
+    //
+    // 4 steps a second, so a lap takes 2 s and every lane blinks at 0.5 Hz --
+    // slow enough to follow a single dot around the module.  50 MHz / 4.
+    localparam integer STEP_DIV = 12_500_000;
+    reg [23:0] step_cnt;
+    reg [2:0]  lane;                 // the lit module lane, 0..7
+    wire step_tick = (step_cnt == STEP_DIV - 1);
 
-    assign pmod1_io0 = cnt_sys[24];   // ~1.49 Hz
-    assign pmod1_io1 = cnt_27[23];    // ~1.61 Hz, clk27 alive
-    assign pmod1_io2 = cnt_hclk[24];  // ~2.21 Hz, hclk alive
-    assign pmod1_io3 = lock27;
-    assign pmod1_io4 = lock_hdmi;
+    always @(posedge sys_clk) begin
+        if (step_tick) begin
+            step_cnt <= 24'd0;
+            lane     <= lane + 3'd1;
+        end else begin
+            step_cnt <= step_cnt + 24'd1;
+        end
+    end
+
+    wire [7:0] dot = 8'h01 << lane;  // bit n set = module lane n is lit
+
+    // The dock interleaves the socket rows, so module lane n is not IO n: lanes
+    // 0-3 land on IO0/2/4/6 and lanes 4-7 on IO1/3/5/7.  Driving these in lane
+    // order while the socket is wired in IO order is what makes the direction
+    // of travel mean something -- and the first load of this chaser confirmed
+    // it on hardware: the marker travels 1 -> 8 in order and then repeats, so
+    // the module's own LEDs run in lane order.
+    assign pmod1_io0 = dot[0];       // module pin 1  <- lane 0
+    assign pmod1_io2 = dot[1];       // module pin 2  <- lane 1
+    assign pmod1_io4 = dot[2];       // module pin 3  <- lane 2
+    assign pmod1_io6 = dot[3];       // module pin 4  <- lane 3
+    assign pmod1_io1 = dot[4];       // module pin 7  <- lane 4
+    assign pmod1_io3 = dot[5];       // module pin 8  <- lane 5
+    assign pmod1_io5 = dot[6];       // module pin 9  <- lane 6
+    assign pmod1_io7 = dot[7];       // module pin 10 <- lane 7
 
 endmodule
 
