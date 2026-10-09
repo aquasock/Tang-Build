@@ -1187,3 +1187,33 @@ The target is unchanged and now sharply bounded: `HCLK_MUX_GAMMA30`, the network
 - User Test: PASS
 
 ---
+
+## 39 COMMIT Unreleased 2026-10-09T14:53:10-07:00
+
+#### Coming From:
+
+Unreleased 39f6fa2
+
+#### Purpose:
+
+Reduce the console's card to project-built images by removing the Gowin-built desktop cores, after backing the card up to this workstation.
+
+#### Outcome:
+
+The card now carries only project-built images. Its vendor-built desktop family was obsolete because the desktop core is built by the open flow and drives a display, so the whole card was copied to this workstation and the Gowin desktop images were removed. The copy had to be file-level with the card out of the board, because there is no board-to-workstation path for card files: `tangput` is push-only, and `tools/tinytang_memdump.py` dumps regions the firmware's own `peek` allows, which is MCU memory rather than the FAT filesystem. The backup is `/home/vash/tang-sd-backup-2026-10-09`, 359 files and 1917 MB, and it was verified before anything was deleted: the name-and-size listings of source and backup are identical, and all 20 files under `/cores` are byte-identical by sha256. Five files were then removed, 22,459,358 bytes in total -- `desktop-vendor.bin` at 4,463,306, `desktop-lsrimux.bin` at 4,466,048, and `rollback/desktop-unaligned.bin`, `rollback/desktop-abi1.0.bin` and `rollback/desktop-abi1.1-countfault.bin`. That `desktop-vendor.bin` is the Gowin build is now confirmed rather than assumed, which also confirms entry 38's identification of the vendor control: it matches two local copies under `build/oled-terminal/` byte for byte at `sha256 4fcc62e6570805b4ea02fb7356c3344e7df90ad980bfe78c66475f1245439873`, both under a `reconstruct.*/impl/pnr/` path, which is where `gw_sh` writes, so the deleted file remains reproducible here as well as in the backup. Kept were the open core as both `desktop.bin` and `desktop-open.bin`, the phosphor family including `rollback/phosphortang-abi1.8.bin`, and the patched nestang as `nestang-desk.bin` and `nestang-menu.bin`; deliberately untouched were the BL616 firmware images, which are the board's RISC-V firmware rather than FPGA cores, along with `ble/bonds.bin`, the roms, the scripts and the `tang.ini` files. The card was then flushed and returned to the board, and the user reports that in two-wire mode the console and the desktop both work on it. Three consequences are recorded rather than acted on. Entry 38 names `/cores/console138k/desktop-vendor.bin` as the preserved vendor control and that path no longer exists on the card, the file now living only in the backup and in the local build tree, and because settled entries are not rewritten the disposition is recorded here instead. `/scripts/desktop-lsrimux.tdsh` is a dangling launcher for the removed image and was left in place because it is a script rather than a core, and `open-flow-test.fs` at the card root was left in place because it is a project artifact and not a Gowin build. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry is the only `.ai` change, and validated it as number 39 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+The card is as intended and the display work's target is unchanged: the interconnect behind `HCLK_MUX_GAMMA30` is not modelled in apicula's chipdb, and requiring zero `Failed to route net 'hclk5'` across a seed sweep remains the offline acceptance test, as entries 37 and 38 set out. One consequence of this cycle has to be honoured before any further board comparison against the vendor core, because that file is no longer on the card: restore it with `cp /home/vash/tang-sd-backup-2026-10-09/cores/console138k/desktop-vendor.bin /run/media/vash/TINYTANG/cores/console138k/`, and its `sha256 4fcc62e6570805b4ea02fb7356c3344e7df90ad980bfe78c66475f1245439873` is what a board copy can be checked against. Two small decisions remain with the user, whether to remove the dangling `/scripts/desktop-lsrimux.tdsh` and whether to keep `open-flow-test.fs` on the card. Do not re-walk the placement seed, the divider bel or the fabric lane entry, all refuted; do not try to pin a CLKDIV bel, which `INS_LOC` cannot express; and keep the power-cycle rule on every load along with the seating rule for the VGA pair. The desktop patch consolidation recorded in `evidence/desktop-display-cycle.txt` section 7 remains deferred at the user's direction.
+
+#### Files Modified:
+
+- evidence/sd-card-prune.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: PASS
+- User Test: PASS
+
+---

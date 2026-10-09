@@ -1,0 +1,96 @@
+# The console's card, pruned to project-built images
+
+The card carried a family of Gowin-built desktop cores alongside the project's
+own images.  With the desktop core now built by the open flow and driving a
+display (`evidence/desktop-vga-display.txt`), the vendor-built desktop family is
+obsolete on the card, so the card was reduced to the open core, phosphor and the
+patched nestang — after a full backup to the workstation.
+
+## The transfer constraint
+
+There is no board-to-workstation path for card files.  `tangput` is push-only
+("Put a file onto a TinyTang board's SD card over its USB CDC console"), and
+`tools/tinytang_memdump.py` dumps regions the firmware's own `peek` allows, which
+is MCU memory rather than the FAT filesystem.  So the backup had to be a
+file-level copy with the card out of the board and mounted here — not a disk
+image, and not over the console.
+
+## The backup
+
+```
+source      /run/media/vash/TINYTANG  (/dev/sdc1, 30 GB, 1.9 GB used, 359 files)
+backup      /home/vash/tang-sd-backup-2026-10-09
+size        1917 MB, 359 files
+method      cp -a, file-level (no disk image)
+```
+
+Verified two ways before anything was deleted:
+
+- the `find -type f -printf '%s %p'` listings of source and backup are identical,
+  359 files each;
+- every file under `/cores` hashes the same on both sides — 20 of 20
+  byte-identical by sha256.
+
+## What was removed
+
+```
+cores/console138k/desktop-vendor.bin                     4463306
+cores/console138k/desktop-lsrimux.bin                    4466048
+cores/console138k/rollback/desktop-unaligned.bin         4524032
+cores/console138k/rollback/desktop-abi1.0.bin            4524032
+cores/console138k/rollback/desktop-abi1.1-countfault.bin 4481940
+                                                 total   22459358  (21.4 MiB)
+```
+
+`desktop-vendor.bin` is the Gowin-built desktop core, and that is now confirmed
+rather than assumed: it matches two copies on this workstation byte for byte,
+`build/oled-terminal/sweep-blockfix/place2/desktop.bin` and
+`build/oled-terminal/qualify/desktop-blockfix.bin`, both at
+`sha256 4fcc62e6570805b4ea02fb7356c3344e7df90ad980bfe78c66475f1245439873`, and
+both under a `reconstruct.*/impl/pnr/` path, which is where `gw_sh` writes.  It
+also confirms entry 38's identification of the vendor control.  The file is
+recoverable from either the backup or that build tree, so removing it from the
+card costs nothing durable — but it was the only on-card rollback, and restoring
+it is one `cp`.
+
+## What was kept, and what was deliberately not touched
+
+Kept, being the three families the card is meant to carry:
+
+```
+our open core      desktop.bin  4463286        desktop-open.bin  4463286
+patched nestang    nestang-desk.bin  4603392   nestang-menu.bin  4524032
+phosphor           phosphortang.bin  phosphortang.bin.bak  phosphor-p0.bin
+                   phosphor-p1.bin  phosphor-p2.bin  phosphor-jtag.bin
+                   phosphortang-i2s2-tone.bin  phosphortang-i2s2-play.bin
+                   phosphortang-oscope.bin  phosphortang-oscope.bin.bak
+                   rollback/phosphortang-abi1.8.bin
+```
+
+Not touched: the BL616 firmware images (`bl616-firmware.bin` and the
+pre-desktop, pre-oled, pre-lazy and pre-utf8 images, plus `tinytang-upload.bin`)
+are the board's RISC-V firmware, not FPGA cores, and removing them would cost
+the MCU rather than clean the FPGA; `ble/bonds.bin` holds the Bluetooth
+pairings; `/roms/castlevania.nes`, `/scripts/` and the `tang.ini` files are
+unchanged.
+
+## Post-prune state
+
+`/cores/console138k/` holds 14 files and `rollback/` one, 15 where the backup has
+20.  The card boots the open core: `scripts/boot.tdsh` runs
+`tangload /cores/console138k/desktop.bin` and `/tang.ini` declares the VGA pair,
+so a power-cycle comes up on the open bitstream with a display.  The user
+reports, on the pruned card in two-wire mode, that the console works and that
+the desktop works.
+
+## Loose ends recorded rather than acted on
+
+- `/scripts/desktop-lsrimux.tdsh` is now a dangling launcher for the removed
+  `desktop-lsrimux.bin`.  It is a script rather than a core, so it was left in
+  place; the user has not yet said whether to remove it.
+- `open-flow-test.fs` (7,042,517 bytes) at the card root is a project artifact,
+  not a Gowin build, so it was outside the prune and remains.
+- Entry 38 names `/cores/console138k/desktop-vendor.bin` as the preserved vendor
+  control.  That path no longer exists on the card; the file now lives only in
+  the backup and in the local build tree.  Settled entries are not rewritten, so
+  the disposition is recorded here and in the entry that accompanies it.
