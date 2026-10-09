@@ -1,0 +1,43 @@
+// clock-smoke pin constraints. SPDX-License-Identifier: MIT
+//
+// sys_clk and uart_tx are the ones the board's own demo uses
+// (apicula examples/gw5a/tangconsole138k.cst), and the schematic confirms both
+// on this carrier: clk is V22 (50 MHz), FPGA_UART.TX is BANK5_U15_IOB68A.
+//
+// The PMOD1 pins below carry the names Apicula's board file gives as `led[0]`
+// .. `led[4]`.  On Tang_138K_Console_V32001C they are the PMOD1 header, per
+// sheet /SOM_BTB0/, so they are constrained under their real names here.
+
+IO_LOC "sys_clk" V22;
+IO_PORT "sys_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=OFF;
+
+IO_LOC "uart_tx" U15;
+IO_PORT "uart_tx" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8 BANK_VCCIO=3.3;
+
+IO_LOC "pmod1_io0" W19;
+IO_PORT "pmod1_io0" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "pmod1_io1" W20;
+IO_PORT "pmod1_io1" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "pmod1_io2" F19;
+IO_PORT "pmod1_io2" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "pmod1_io3" F20;
+IO_PORT "pmod1_io3" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "pmod1_io4" E22;
+IO_PORT "pmod1_io4" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+
+// Placement.  NOT cosmetic: the placer's free choice is a losing one here.
+//
+// Left unpinned, nextpnr put pll_27 on PLL_B[0] (row 108, col 28), pll_hdmi on
+// PLL_B[2] (row 108, col 146) and div5 on HCLK block 1 (row 27, col 181).  All
+// three are sites the upstream fuzz campaign measured as broken in the open
+// flow's model (fuzz/gw5ast138c/shapes/clocking_e2e.py): the bottom-edge PLL
+// sites cannot route CLKOUT0 to fabric at all, and HCLK blocks 0 and 1 have no
+// modelled clock escape.  Routing then failed on `hclk`.
+//
+// These two lines are the desktop core's own arrangement -- the placement that
+// its successful place-and-route produced, and whose `clk` output is already
+// proven on hardware.  div5's site is set by the BEL attribute on the instance
+// in the Verilog, because the .cst reader cannot parse this die's CLKDIV
+// spelling.
+INS_LOC "pll_27" PLL_L[1];
+INS_LOC "pll_hdmi" PLL_L[3];

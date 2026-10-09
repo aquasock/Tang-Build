@@ -147,3 +147,37 @@ None.
 - User Test: FAIL
 
 ---
+
+## 6 COMMIT Unreleased 2026-10-08T21:48:31-07:00
+
+#### Coming From:
+
+Unreleased 7b48976
+
+#### Purpose:
+
+Isolate the desktop core's clock chain in a minimal design that can be built, loaded and observed on the board, so that the display path's failure can be attributed to a clock or ruled out of it.
+
+#### Outcome:
+
+The display path's failure was attacked by isolating its clock chain, and the isolation changed what is known. `fpga/clock-smoke/` carries nothing but `sys_clk` 50 MHz into `pll_27`, that into `pll_hdmi`, and that through the desktop core's own `CLKDIV #(.DIV_MODE(5))` to `hclk`, with counters in all three domains as the readout; it is built by `scripts/build-clock-smoke.sh` against the locally generated database. Two faults had to be cleared before it would build. Left unpinned, nextpnr chose exactly the sites the upstream fuzz campaign had already measured as broken in this open flow's model, `PLL_B[0]`, `PLL_B[2]` and HCLK block 1, which `fuzz/gw5ast138c/shapes/clocking_e2e.py` records as unable to route `CLKOUT0` to fabric and as carrying no modelled clock escape, and routing then failed on `hclk`; pinning `pll_27` to `PLL_L[1]`, `pll_hdmi` to `PLL_L[3]` and `div5` to `X181Y81/CLKDIV_3` fixed it, the first two by `INS_LOC` in the constraint file and the third by an RTL `BEL` attribute, which is the desktop core's own arrangement and the only spelling nextpnr's `.cst` reader takes for a CLKDIV on this die. The readout itself had to be replaced. The first version drove `led[0..4]` at the balls Apicula's `tangconsole138k.cst` names, W19, F19, E22, W20 and F20, and the user saw nothing, because the console schematic maps those five to PMOD1_IO0, IO2, IO4, IO1 and IO3 on the PMOD1 header and this carrier has no FPGA-driven LED at all, its one status LED being wired to the FPGA's dedicated READY and DONE configuration nets. The readout is therefore the FPGA's UART on ball U15, the channel `evidence/uart-live-capture.bin` already proved, and `tools/decode-clock-smoke.py` measures it; `evidence/clock-smoke-readout.txt` holds this cycle's capture, its decode and a sample of the lines. What the board then showed is that the clock chain runs. Both PLLs lock, `lock=11` on every one of about five thousand lines, which puts two further operating points on the charge-pump model this project extended, and `sys_clk`, `clk27` and `hclk` all toggle, which means `pll_hdmi`'s 371.25 MHz does reach the CLKDIV and the CLKDIV does divide it, even though nextpnr reached that lane only through general routing after refusing the dedicated path. That is a measured answer to the gap `clocking_e2e.py` records as unbuildable and it bears on the display question directly, because the chain that was suspected is not the broken one. Two things are not settled and are recorded rather than smoothed over. The user test could not be run as designed, because the observable it was written for does not exist on this carrier; the user's one hardware report, an HDMI flicker at load, is the reconfiguration being seen and not a clock result, and the clock result is an agent-run device-side capture, which is not user acceptance. And the counters' top flops are being trimmed by synthesis, `cnt_sys` declared 25 bits with only bit 24 read coming back as 24 flops, so the absolute rates read out for `clk27` and `hclk` are ambiguous by a factor of two between the designed 27.00 and 74.25 MHz and their doubles; `(* keep *)` did not prevent it, `sys_clk` is not ambiguous because the line period and a clean 115200 decode agree on 49.98 MHz, and the desktop core's own keylink answering at a baud derived from `pll_nes` argues the PLLs are right, but that is inference and is labelled as such. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and `core-log.md` was, and validated this entry as number 6 of the active log with a conforming header, six sections in canonical order, prose in Outcome and Next Steps, and an allowed Status set. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Settle the counter indexing before anything else, because it is one small change and it decides what the result means. Reporting two bits of each counter in the message, `cnt_sys[24]` alongside `cnt_sys[23]` and so on, makes the design state its own indexing, since a measured 2:1 ratio between a bit and its neighbour confirms 27.00 and 74.25 MHz and closes the cycle while a 1:1 ratio would mean the PLLs are doubled, which would itself explain the dark display and redirect the work; `(* keep *)` on the counters did not stop the trim, so the fix is that plus a second bit per counter, or a counter whose top bit is genuinely needed. Once the rates are settled, the CLKDIV result is the thread to pull: this cycle has shown that `pll_hdmi`'s output reaches the divider and divides, so the two candidates entry 5 left open, timing on `hclk5` and the bitstream's option preamble, remain the live ones, and the `hclk5` question can now be attacked with a design that gives nextpnr something it can report a maximum frequency for on that net. The design, `scripts/build-clock-smoke.sh` and `tools/decode-clock-smoke.py` are the instruments for that and should be kept working. The board was left loaded with `clock-smoke` in SRAM and needs a power cycle or the reconfig button to return to its flash core.
+
+#### Files Modified:
+
+- fpga/clock-smoke/clock_smoke.v
+- fpga/clock-smoke/clock_smoke.cst
+- fpga/clock-smoke/clock_smoke.sdc
+- scripts/build-clock-smoke.sh
+- tools/decode-clock-smoke.py
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: FAIL
+
+---

@@ -1,0 +1,99 @@
+# clock-smoke readout, captured from the board
+#
+# Design:  fpga/clock-smoke/clock_smoke.v
+# Built:   scripts/build-clock-smoke.sh  (nextpnr-himbaechel from the apicula fork)
+# Loaded:  openFPGALoader -b tangconsole, one-wire (MCU port 0403:6010), SRAM
+#          IDCODE 0x1081b, erase + load to 100%, DONE
+# Bitstream: 34,668,145 bytes, sha256 2665712f13d63d2d3bf5240e524de8adb41d669b66fac56888ac47db19b14dbf
+# Captured: /dev/ttyUSB1 at 115200 for 25.010 s -> 198458 bytes
+#
+# The design sends one 40-byte line every 2^18 sys_clk cycles:
+#   clock-smoke s=A c=B h=C lock=DE n=XXXX
+# A/B/C are cnt_sys[24], cnt_27[23], cnt_hclk[24]; D/E are the PLL LOCK
+# bits; n is a counter of lines sent, so the capture states its own time base.
+
+==================================================================
+tools/decode-clock-smoke.py uart-capture.bin --seconds 25.009868
+==================================================================
+capture : /tmp/tb/clock-smoke/uart-capture.bin
+           198458 bytes, 25.010 s
+lines   : 4959 well-formed; bytes accounted for 198360/198458
+          n= deltas: {1: 4957, 60561: 1}
+          1 step(s) are not +1 and are excluded: {60561: 1}
+          4957 lines between the first and last counter reading
+          line period  5.045364 ms  (198.20 lines/s)
+
+PLL lock bits (pll_27, pll_hdmi): 11 x4959
+
+bit periods, in lines:
+  sys_clk                  78 transitions, median 64, mean 63.792 lines
+  clk27                    84 transitions, median 59, mean 59.241 lines
+  hclk (CLKDIV output)     115 transitions, median 43, mean 42.895 lines
+
+cadence check: `s` should toggle every 128 lines
+  measured 63.792 lines, error -50.162%
+  cadence does NOT match the RTL -- absolute frequencies withheld
+
+==================================================================
+60 consecutive lines from the middle of the capture
+==================================================================
+clock-smoke s=1 c=0 h=1 lock=11 n=08f7
+clock-smoke s=1 c=0 h=1 lock=11 n=08f8
+clock-smoke s=1 c=0 h=1 lock=11 n=08f9
+clock-smoke s=1 c=0 h=1 lock=11 n=08fa
+clock-smoke s=1 c=0 h=1 lock=11 n=08fb
+clock-smoke s=1 c=0 h=1 lock=11 n=08fc
+clock-smoke s=1 c=0 h=1 lock=11 n=08fd
+clock-smoke s=1 c=0 h=1 lock=11 n=08fe
+clock-smoke s=1 c=0 h=1 lock=11 n=08ff
+clock-smoke s=0 c=0 h=1 lock=11 n=0900
+clock-smoke s=0 c=0 h=1 lock=11 n=0901
+clock-smoke s=0 c=0 h=1 lock=11 n=0902
+clock-smoke s=0 c=0 h=1 lock=11 n=0903
+clock-smoke s=0 c=0 h=1 lock=11 n=0904
+clock-smoke s=0 c=0 h=1 lock=11 n=0905
+clock-smoke s=0 c=0 h=1 lock=11 n=0906
+clock-smoke s=0 c=1 h=1 lock=11 n=0907
+clock-smoke s=0 c=1 h=1 lock=11 n=0908
+clock-smoke s=0 c=1 h=1 lock=11 n=0909
+clock-smoke s=0 c=1 h=1 lock=11 n=090a
+clock-smoke s=0 c=1 h=1 lock=11 n=090b
+clock-smoke s=0 c=1 h=1 lock=11 n=090c
+clock-smoke s=0 c=1 h=1 lock=11 n=090d
+clock-smoke s=0 c=1 h=1 lock=11 n=090e
+clock-smoke s=0 c=1 h=1 lock=11 n=090f
+clock-smoke s=0 c=1 h=1 lock=11 n=0910
+clock-smoke s=0 c=1 h=1 lock=11 n=0911
+clock-smoke s=0 c=1 h=1 lock=11 n=0912
+clock-smoke s=0 c=1 h=1 lock=11 n=0913
+clock-smoke s=0 c=1 h=1 lock=11 n=0914
+clock-smoke s=0 c=1 h=1 lock=11 n=0915
+clock-smoke s=0 c=1 h=1 lock=11 n=0916
+clock-smoke s=0 c=1 h=0 lock=11 n=0917
+clock-smoke s=0 c=1 h=0 lock=11 n=0918
+clock-smoke s=0 c=1 h=0 lock=11 n=0919
+clock-smoke s=0 c=1 h=0 lock=11 n=091a
+clock-smoke s=0 c=1 h=0 lock=11 n=091b
+clock-smoke s=0 c=1 h=0 lock=11 n=091c
+clock-smoke s=0 c=1 h=0 lock=11 n=091d
+clock-smoke s=0 c=1 h=0 lock=11 n=091e
+clock-smoke s=0 c=1 h=0 lock=11 n=091f
+clock-smoke s=0 c=1 h=0 lock=11 n=0920
+clock-smoke s=0 c=1 h=0 lock=11 n=0921
+clock-smoke s=0 c=1 h=0 lock=11 n=0922
+clock-smoke s=0 c=1 h=0 lock=11 n=0923
+clock-smoke s=0 c=1 h=0 lock=11 n=0924
+clock-smoke s=0 c=1 h=0 lock=11 n=0925
+clock-smoke s=0 c=1 h=0 lock=11 n=0926
+clock-smoke s=0 c=1 h=0 lock=11 n=0927
+clock-smoke s=0 c=1 h=0 lock=11 n=0928
+clock-smoke s=0 c=1 h=0 lock=11 n=0929
+clock-smoke s=0 c=1 h=0 lock=11 n=092a
+clock-smoke s=0 c=1 h=0 lock=11 n=092b
+clock-smoke s=0 c=1 h=0 lock=11 n=092c
+clock-smoke s=0 c=1 h=0 lock=11 n=092d
+clock-smoke s=0 c=1 h=0 lock=11 n=092e
+clock-smoke s=0 c=1 h=0 lock=11 n=092f
+clock-smoke s=0 c=1 h=0 lock=11 n=0930
+clock-smoke s=0 c=1 h=0 lock=11 n=0931
+clock-smoke s=0 c=1 h=0 lock=11 n=0932

@@ -1,0 +1,396 @@
+// clock-smoke: the desktop core's clock chain, isolated and nothing else.
+//
+// The desktop core's display path needs three things that nothing has yet
+// proven on real silicon, all of them in the chain below:
+//
+//   sys_clk 50 MHz -> pll_27 (VCO 1350 MHz) -> clk27 27 MHz
+//                  -> pll_hdmi (VCO 1485 MHz) -> hclk5 371.25 MHz
+//                  -> CLKDIV 5 -> hclk 74.25 MHz
+//
+// Both VCOs sit above the 1300 MHz figure `gowin_pack` refused before this
+// project extended the charge-pump model with measured points, so a locking
+// pair is evidence for that extension, on hardware, independent of the
+// desktop core's other 8,500 cells.
+//
+// ---------------------------------------------------------------- readout
+//
+// The readout is the FPGA's UART (ball U15), not LEDs, and that is a measured
+// correction rather than a preference.  The first version of this design drove
+// `led[0..4]` at the balls Apicula's `tangconsole138k.cst` calls `led[0]` ..
+// `led[4]` -- W19, F19, E22, W20, F20.  On this carrier those are not LEDs:
+// `Tang_Mega_138K_Console_32001C__Schematics.pdf` sheet /SOM_BTB0/ maps them to
+// PMOD1_IO0 (W19), PMOD1_IO1 (W20), PMOD1_IO2 (F19), PMOD1_IO3 (F20) and
+// PMOD1_IO4 (E22) on the PMOD1 header.  The console has no FPGA-driven LED at
+// all -- its one status LED, `LED1`, is wired to the FPGA's dedicated READY and
+// DONE configuration nets and to SYS_ACT, none of which fabric drives.  Those
+// five balls are still driven here, under their real names, so a meter or a
+// spare LED on the PMOD1 header reads them; but the instrument is the UART.
+//
+// The UART is clocked by `sys_clk` alone, so it keeps reporting even if every
+// PLL is dead -- which is exactly the case worth being able to see.  It sends
+// one fixed 40-byte line:
+//
+//   clock-smoke s=A c=B h=C lock=DE n=XXXX\r\n
+//
+//      s  cnt_sys[24]    ~1.49 Hz if the 50 MHz input is running
+//      c  cnt_27[23]     ~1.61 Hz if clk27 is running
+//      h  cnt_hclk[24]   ~2.21 Hz if hclk (the CLKDIV output) is running
+//      D  pll_27 LOCK
+//      E  pll_hdmi LOCK
+//      n  cnt_line[15:0] a counter of lines sent, so the design states its own
+//                        time base instead of leaving it to be inferred
+//
+// A line is sent every 2^18 = 262,144 `sys_clk` cycles, and nothing else in
+// the design can delay that, so the line period is exactly 5.24288 ms at
+// 50 MHz.  That is the point: counting *lines* between a transition of `c` and
+// the next gives clk27 = 2^25 / (lines x 5.24288 ms) with the 50 MHz crystal
+// as the only reference, and the same for hclk.  The rates are therefore
+// measured, not asserted, and a wrong rate is visible rather than merely
+// "off".  hclk5 gets no character of its own: a 371.25 MHz flop path fails
+// timing here (288.77 MHz against 371.33 required, measured on the first
+// version of this design), and hclk is hclk5/5, so a correct hclk rate is what
+// establishes hclk5.
+// SPDX-License-Identifier: MIT
+
+`default_nettype none
+
+module clock_smoke (
+    input  wire sys_clk,
+    output wire uart_tx,
+    output wire pmod1_io0,
+    output wire pmod1_io1,
+    output wire pmod1_io2,
+    output wire pmod1_io3,
+    output wire pmod1_io4
+);
+
+    wire gw_vcc;
+    wire gw_gnd;
+    assign gw_vcc = 1'b1;
+    assign gw_gnd = 1'b0;
+
+    wire clk27;
+    wire hclk5;
+    wire hclk;
+    wire lock27;
+    wire lock_hdmi;
+
+    // ---------------------------------------------------------------- clocks
+
+    // 50 MHz in, 27 MHz out.  IDIV 1, FBDIV 1, MDIV 27 -> VCO 1350 MHz,
+    // ODIV0 50 -> 27 MHz.  The desktop core's own operating point.
+    PLL pll_27 (
+        .LOCK       (lock27),
+        .CLKOUT0    (clk27),
+        .CLKOUT1    (),
+        .CLKOUT2    (),
+        .CLKOUT3    (),
+        .CLKOUT4    (),
+        .CLKOUT5    (),
+        .CLKOUT6    (),
+        .CLKFBOUT   (),
+        .CLKIN      (sys_clk),
+        .CLKFB      (gw_gnd),
+        .RESET      (gw_gnd),
+        .PLLPWD     (gw_gnd),
+        .RESET_I    (gw_gnd),
+        .RESET_O    (gw_gnd),
+        .FBDSEL     (6'b0),
+        .IDSEL      (6'b0),
+        .MDSEL      (7'b0),
+        .MDSEL_FRAC (3'b0),
+        .ODSEL0     (7'b0),
+        .ODSEL0_FRAC(3'b0),
+        .ODSEL1     (7'b0),
+        .ODSEL2     (7'b0),
+        .ODSEL3     (7'b0),
+        .ODSEL4     (7'b0),
+        .ODSEL5     (7'b0),
+        .ODSEL6     (7'b0),
+        .DT0        (4'b0),
+        .DT1        (4'b0),
+        .DT2        (4'b0),
+        .DT3        (4'b0),
+        .ICPSEL     (6'b0),
+        .LPFRES     (3'b0),
+        .LPFCAP     (2'b0),
+        .PSSEL      (3'b0),
+        .PSDIR      (gw_gnd),
+        .PSPULSE    (gw_gnd),
+        .ENCLK0     (gw_vcc),
+        .ENCLK1     (gw_vcc),
+        .ENCLK2     (gw_vcc),
+        .ENCLK3     (gw_vcc),
+        .ENCLK4     (gw_vcc),
+        .ENCLK5     (gw_vcc),
+        .ENCLK6     (gw_vcc),
+        .SSCPOL     (gw_gnd),
+        .SSCON      (gw_gnd),
+        .SSCMDSEL   (7'b0),
+        .SSCMDSEL_FRAC(3'b0)
+    );
+    defparam pll_27.FCLKIN = "50";
+    defparam pll_27.IDIV_SEL = 1;
+    defparam pll_27.FBDIV_SEL = 1;
+    defparam pll_27.MDIV_SEL = 27;
+    defparam pll_27.MDIV_FRAC_SEL = 0;
+    defparam pll_27.ODIV0_SEL = 50;
+    defparam pll_27.CLKOUT0_EN = "TRUE";
+    defparam pll_27.CLKFB_SEL = "INTERNAL";
+
+    // 27 MHz in, 371.25 MHz out.  MDIV 55 -> VCO 1485 MHz, ODIV0 4.
+    PLL pll_hdmi (
+        .LOCK       (lock_hdmi),
+        .CLKOUT0    (hclk5),
+        .CLKOUT1    (),
+        .CLKOUT2    (),
+        .CLKOUT3    (),
+        .CLKOUT4    (),
+        .CLKOUT5    (),
+        .CLKOUT6    (),
+        .CLKFBOUT   (),
+        .CLKIN      (clk27),
+        .CLKFB      (gw_gnd),
+        .RESET      (gw_gnd),
+        .PLLPWD     (gw_gnd),
+        .RESET_I    (gw_gnd),
+        .RESET_O    (gw_gnd),
+        .FBDSEL     (6'b0),
+        .IDSEL      (6'b0),
+        .MDSEL      (7'b0),
+        .MDSEL_FRAC (3'b0),
+        .ODSEL0     (7'b0),
+        .ODSEL0_FRAC(3'b0),
+        .ODSEL1     (7'b0),
+        .ODSEL2     (7'b0),
+        .ODSEL3     (7'b0),
+        .ODSEL4     (7'b0),
+        .ODSEL5     (7'b0),
+        .ODSEL6     (7'b0),
+        .DT0        (4'b0),
+        .DT1        (4'b0),
+        .DT2        (4'b0),
+        .DT3        (4'b0),
+        .ICPSEL     (6'b0),
+        .LPFRES     (3'b0),
+        .LPFCAP     (2'b0),
+        .PSSEL      (3'b0),
+        .PSDIR      (gw_gnd),
+        .PSPULSE    (gw_gnd),
+        .ENCLK0     (gw_vcc),
+        .ENCLK1     (gw_vcc),
+        .ENCLK2     (gw_vcc),
+        .ENCLK3     (gw_vcc),
+        .ENCLK4     (gw_vcc),
+        .ENCLK5     (gw_vcc),
+        .ENCLK6     (gw_vcc),
+        .SSCPOL     (gw_gnd),
+        .SSCON      (gw_gnd),
+        .SSCMDSEL   (7'b0),
+        .SSCMDSEL_FRAC(3'b0)
+    );
+    defparam pll_hdmi.FCLKIN = "27";
+    defparam pll_hdmi.IDIV_SEL = 1;
+    defparam pll_hdmi.FBDIV_SEL = 1;
+    defparam pll_hdmi.MDIV_SEL = 55;
+    defparam pll_hdmi.MDIV_FRAC_SEL = 0;
+    defparam pll_hdmi.ODIV0_SEL = 4;
+    defparam pll_hdmi.CLKOUT0_EN = "TRUE";
+    defparam pll_hdmi.CLKFB_SEL = "INTERNAL";
+
+    // 371.25 -> 74.25 MHz, the plain pixel clock.  The desktop core's CLKDIV.
+    //
+    // The site is pinned by an attribute rather than a .cst line on purpose:
+    // nextpnr's .cst reader cannot parse this die's CLKDIV spelling (the fuzz
+    // campaign hit a fatal `Unknown placement macro` on `BOTTOMSIDE[4]`), and
+    // the RTL `BEL` attribute is the spelling the open flow does take.
+    // X181Y81 is HCLK block 3 and is where the desktop core's own div5 landed.
+    (* BEL = "X181Y81/CLKDIV_3" *) CLKDIV #(.DIV_MODE(5)) div5 (
+        .CLKOUT (hclk),
+        .HCLKIN (hclk5),
+        .RESETN (gw_vcc),
+        .CALIB  (gw_gnd)
+    );
+
+    // ---------------------------------------------------------------- counters
+    //
+    // One counter per clock domain, each read out on its slowest bit.  The
+    // three rates are distinct (~1.49, ~1.61 and ~2.21 Hz) so that a clock
+    // running at the wrong rate, or not at all, is visible rather than merely
+    // "off".  A counter with no consumer is optimised away, so each of these
+    // exists because the report reads it.
+
+    // `keep` on the counters is not decoration.  Without it yosys trims a
+    // counter whose top bit is the only one read -- `cnt_sys[24]` came back as
+    // 24 flops, not 25 -- so `cnt_sys[24]` silently became bit 23 and the
+    // reported rate doubled.  Measured, and the reason this design's first
+    // readout could not be trusted about absolutes.
+    (* keep *) reg [24:0] cnt_sys;
+    always @(posedge sys_clk) cnt_sys <= cnt_sys + 1'b1;
+
+    (* keep *) reg [23:0] cnt_27;
+    always @(posedge clk27) cnt_27 <= cnt_27 + 1'b1;
+
+    (* keep *) reg [24:0] cnt_hclk;
+    always @(posedge hclk) cnt_hclk <= cnt_hclk + 1'b1;
+
+    // clk27's and hclk's slow bits are sampled by sys_clk so one domain can
+    // report on all three.  Two flops each: the report wants a sampled bit, not
+    // a synchronised value, and it is only ever read by the UART below.
+    reg [1:0] s27;
+    reg [1:0] shclk;
+    always @(posedge sys_clk) begin
+        s27   <= {s27[0],   cnt_27[23]};
+        shclk <= {shclk[0], cnt_hclk[24]};
+    end
+
+    // ------------------------------------------------------------- line cadence
+    //
+    // Exactly 2^18 sys_clk cycles.  A line takes 33 x 10 x 434 = 143,220
+    // cycles, so it always finishes inside the window and no tick is ever
+    // skipped -- which is what lets a reader treat the period as exact.
+
+    localparam CAD_BITS = 18;
+    reg [CAD_BITS-1:0] cad;
+    wire line_tick = (cad == {CAD_BITS{1'b1}});
+    always @(posedge sys_clk) cad <= line_tick ? {CAD_BITS{1'b0}} : cad + 1'b1;
+
+    // ----------------------------------------------------------- UART, 115200
+    //
+    // 50 MHz / 115200 = 434.03 -> 434, an error of +0.007% .  Characters go
+    // out as 8N1, LSB first, with one idle bit between frames.
+
+    localparam BAUD_DIV = 434;
+    localparam MSG_LEN  = 40;
+
+    // A line counter, reported in the message as four hex digits.  It exists
+    // because the first version of this readout could not settle its own time
+    // base from outside: whether the host was seeing every line, and how many
+    // `sys_clk` cycles a line really spans, are both decided here rather than
+    // inferred from a capture.  `n=` in two consecutive lines differing by one
+    // is the capture being faithful; a repeat is a duplicated read.
+    reg [31:0] cnt_line;
+    function [7:0] hexd;
+        input [3:0] v;
+        begin
+            hexd = (v < 4'd10) ? (8'h30 + {4'b0, v})
+                               : (8'h61 + {4'b0, v} - 8'd10);
+        end
+    endfunction
+
+    reg [15:0] baud;
+    reg [3:0]  bit_idx;
+    reg [5:0]  msg_idx;
+    reg [5:0]  chars_left;
+    reg        tx_busy;
+    reg [9:0]  frame;
+
+    wire [7:0] ch_s = cnt_sys[24] ? 8'h31 : 8'h30;
+    wire [7:0] ch_c = s27[0]      ? 8'h31 : 8'h30;
+    wire [7:0] ch_h = shclk[0]    ? 8'h31 : 8'h30;
+    wire [7:0] ch_d = lock27      ? 8'h31 : 8'h30;
+    wire [7:0] ch_e = lock_hdmi   ? 8'h31 : 8'h30;
+
+    // "clock-smoke s=A c=B h=C lock=DE n=XXXX\r\n", one case arm per byte.
+    function [7:0] msg_byte;
+        input [5:0] i;
+        begin
+            case (i)
+                6'd0:  msg_byte = 8'h63;  // c
+                6'd1:  msg_byte = 8'h6c;  // l
+                6'd2:  msg_byte = 8'h6f;  // o
+                6'd3:  msg_byte = 8'h63;  // c
+                6'd4:  msg_byte = 8'h6b;  // k
+                6'd5:  msg_byte = 8'h2d;  // -
+                6'd6:  msg_byte = 8'h73;  // s
+                6'd7:  msg_byte = 8'h6d;  // m
+                6'd8:  msg_byte = 8'h6f;  // o
+                6'd9:  msg_byte = 8'h6b;  // k
+                6'd10: msg_byte = 8'h65;  // e
+                6'd11: msg_byte = 8'h20;  // ' '
+                6'd12: msg_byte = 8'h73;  // s
+                6'd13: msg_byte = 8'h3d;  // =
+                6'd14: msg_byte = ch_s;
+                6'd15: msg_byte = 8'h20;  // ' '
+                6'd16: msg_byte = 8'h63;  // c
+                6'd17: msg_byte = 8'h3d;  // =
+                6'd18: msg_byte = ch_c;
+                6'd19: msg_byte = 8'h20;  // ' '
+                6'd20: msg_byte = 8'h68;  // h
+                6'd21: msg_byte = 8'h3d;  // =
+                6'd22: msg_byte = ch_h;
+                6'd23: msg_byte = 8'h20;  // ' '
+                6'd24: msg_byte = 8'h6c;  // l
+                6'd25: msg_byte = 8'h6f;  // o
+                6'd26: msg_byte = 8'h63;  // c
+                6'd27: msg_byte = 8'h6b;  // k
+                6'd28: msg_byte = 8'h3d;  // =
+                6'd29: msg_byte = ch_d;
+                6'd30: msg_byte = ch_e;
+                6'd31: msg_byte = 8'h20;  // ' '
+                6'd32: msg_byte = 8'h6e;  // n
+                6'd33: msg_byte = 8'h3d;  // =
+                6'd34: msg_byte = hexd(cnt_line[15:12]);
+                6'd35: msg_byte = hexd(cnt_line[11:8]);
+                6'd36: msg_byte = hexd(cnt_line[7:4]);
+                6'd37: msg_byte = hexd(cnt_line[3:0]);
+                6'd38: msg_byte = 8'h0d;  // CR
+                6'd39: msg_byte = 8'h0a;  // LF
+                default: msg_byte = 8'h20;
+            endcase
+        end
+    endfunction
+
+    // A line begins on the cadence tick itself and its characters run back to
+    // back, so the whole 33-byte line occupies 33 x 10 x 434 = 143,220 sys_clk
+    // cycles -- 2.86 ms -- well inside the 262,144-cycle window.  Restarting
+    // `baud` at the tick is what makes every line exactly 2^18 cycles apart,
+    // and chaining the characters is what makes a line one coherent sample
+    // rather than 33 samples 5.24 ms apart.
+    always @(posedge sys_clk) begin
+        if (line_tick && !tx_busy) begin
+            baud       <= 16'd0;
+            frame      <= {1'b1, msg_byte(6'd0), 1'b0};  // stop, data, start
+            bit_idx    <= 4'd0;
+            tx_busy    <= 1'b1;
+            msg_idx    <= 6'd0;
+            chars_left <= MSG_LEN - 1;
+            cnt_line   <= cnt_line + 32'd1;
+        end else if (baud == BAUD_DIV - 1) begin
+            baud <= 16'd0;
+            if (tx_busy) begin
+                if (bit_idx != 4'd9) begin
+                    bit_idx <= bit_idx + 4'd1;
+                end else if (chars_left != 0) begin
+                    frame      <= {1'b1, msg_byte(msg_idx + 6'd1), 1'b0};
+                    bit_idx    <= 4'd0;
+                    msg_idx    <= msg_idx + 6'd1;
+                    chars_left <= chars_left - 6'd1;
+                end else begin
+                    tx_busy <= 1'b0;
+                end
+            end
+        end else begin
+            baud <= baud + 16'd1;
+        end
+    end
+
+    assign uart_tx = tx_busy ? frame[bit_idx] : 1'b1;
+
+    // ------------------------------------------------------- PMOD1, for a meter
+    //
+    // These five balls are the ones the first version of this design drove as
+    // `led[0..4]`.  They are PMOD1_IO0..IO4, so with nothing on the header they
+    // are simply unread -- which is why the UART above carries the evidence.
+    // They are kept, under their real names, so that a meter or a spare LED on
+    // the header still reads the two slow divides and the two locks.
+
+    assign pmod1_io0 = cnt_sys[24];   // ~1.49 Hz
+    assign pmod1_io1 = cnt_27[23];    // ~1.61 Hz, clk27 alive
+    assign pmod1_io2 = cnt_hclk[24];  // ~2.21 Hz, hclk alive
+    assign pmod1_io3 = lock27;
+    assign pmod1_io4 = lock_hdmi;
+
+endmodule
+
+`default_nettype wire
