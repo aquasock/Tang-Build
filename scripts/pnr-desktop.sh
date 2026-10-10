@@ -15,7 +15,7 @@
 # path below.  The script refuses the suite's copy outright rather than trying
 # to place and reporting a wall that is really a wrong binary.
 #
-# Two pieces of design-to-toolchain translation are needed first, and both are
+# Three pieces of design-to-toolchain translation are needed first, and all are
 # done here rather than by editing the design:
 #
 #  * nextpnr's SDC reader does not accept `//` comments, and desktop.sdc opens
@@ -26,6 +26,8 @@
 #    It is dropped -- but only after checking it really is unused, because
 #    silently deleting a port that something reads would be worse than the
 #    error it avoids.
+#  * the main PLL clock needs an explicit CLOCK/BUFG entry and static DCS to
+#    reach the modeled clock network across the die, rather than fabric clocks.
 set -euo pipefail
 export LC_ALL=C
 
@@ -188,6 +190,9 @@ yosys -q -s "$work/drop.ys" > "$work/drop.log" 2>&1 || {
     exit 1
 }
 
+python3 "$here/../tools/desktop-clock-distribution.py" \
+    "$work/pnr-input.json" "$work/pnr-clocked.json"
+
 # ------------------------------------------------------------------ nextpnr --
 echo
 echo "placing and routing"
@@ -209,7 +214,7 @@ pnr_extra=()
 
 set +e
 "$nextpnr" \
-    --json "$work/pnr-input.json" \
+    --json "$work/pnr-clocked.json" \
     --write "$work/pnr.json" \
     --device GW5AST-LV138PG484AC1/I0 \
     --vopt cst="$cst" \

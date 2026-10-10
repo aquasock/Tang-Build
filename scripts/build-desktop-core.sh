@@ -89,6 +89,7 @@ bash "$here/pnr-desktop.sh" "$tree" "$tree/nestang-top-open.json"
 # hold violations appear in no structured field of nextpnr's report.
 log "=== 2b. timing gate (seed $SEED) ==="
 if ! "$PY" "$root/tools/pnr-timing.py" "$tree/.open-pnr/nextpnr.log" \
+    --require-dedicated-clock clk \
     --require-clock keyboard_link.clk=50 \
     --require-clock desktop_sockets.pixel_clk=74.25 \
     --require-clock clk=21.49; then

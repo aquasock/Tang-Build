@@ -1,0 +1,206 @@
+# Failed main-clock distribution experiment: agent handoff
+
+Cycle date: 2026-10-09, America/Phoenix.
+Base: Tang-Build main at 0294fbd, following core-log entries 42-45.
+Result: FAILED HARDWARE. Clean timing and modeled global routing did not
+produce a working core. The VGA vertical-line defect remains unresolved.
+
+## Current board and repository state
+
+At the user's explicit request, these files were replaced on the Tang SD card:
+
+  /cores/console138k/desktop.bin
+    4526774 bytes
+    SHA256 3f8704bb97b707e0a6accbb595d409cbc6766ac73bc1e6c7ef46f88f4fb0363a
+  /cores/console138k/desktop.fs
+    36239160 bytes
+    SHA256 f1b865c513f90b4320a27777c1fccf1c4023fa2d4f30ddfc05ca18e26fe92739
+
+Each tangput acknowledged the exact byte count and remote path; ls -l
+confirmed both sizes. These SHA256 values identify the local upload sources;
+no full card-file readback hash was obtained. The agent did not issue tangload,
+osd, reset, or a core-start command during this replacement operation.
+The user subsequently reported: "now the core wont boot" and requested this
+log/commit/push handoff. No restoration or additional board access was done
+after that report. Do not assume the baseline is running or installed as
+desktop.bin. Firmware and boot configuration were not edited in this cycle.
+
+The build-script changes are preserved as the tested experiment, including
+the automatic DCS transform in scripts/pnr-desktop.sh and the dedicated-clock
+check in scripts/build-desktop-core.sh. They STILL SELECT THIS FAILED PATH;
+the earlier statement that the agent was removing it was not carried out
+because the user stopped work. This commit is an experimental failure handoff,
+not acceptance of these changes as a working default or a VGA repair.
+
+The prior operational baseline, which boots and stays synced but has vertical
+black lines, is preserved locally:
+
+  build/vga-diagnostic/baseline/desktop.bin
+    4492268 bytes
+    SHA256 7b95d942925497e9a63267ae5d979dca3eb5e4367bc08c68a5a64bbdcb0f077b
+  build/vga-diagnostic/baseline/desktop.fs
+    SHA256 84915457d3dcab4103d2d8f441ad351af639cd96beb993c6b3841d00cc9c8f56
+  build/vga-diagnostic/baseline/pnr-input.json
+  build/vga-diagnostic/baseline/pnr.json
+
+The SD directory listing still contains desktop-vga-baseline.bin (4492268
+bytes), staged in previous cycles from that baseline binary. A recovery load
+requires a fresh user-confirmed power cycle as recorded in prior load cycles.
+The user stopped the proposed recovery here; it was not performed. Do not
+load or restore anything merely to finish this handoff.
+
+## Reason for the experiment and its boundary
+
+The user reports clean VGA before the timing-placement changes, then stable
+sync with terrible vertical black lines afterward, while the Dell E772c
+continues to report about 44.9 kHz / 59.9 Hz. Flat white, eight-pixel red/green,
+constant grey and two-pixel grey controls were clean; clear-only changes did
+not improve the desktop. See the preceding VGA evidence files. The user
+approved directly investigating the timing/clock-distribution regression
+instead of more colour-pattern controls.
+
+Review of this nextpnr fork found that pack_buffered_nets skips PLL drivers
+without a CLOCK attribute. Direct dedicated PLL routing also filters its
+first hop to a spine or another PLL output, while the installed chipdb gives
+this PLL output a local F0 first hop. Forcing CLOCK alone inserts a BUFG,
+but the ordinary clock router still falls back across the DCS bridge.
+That CLOCK-only candidate had a hold violation and was never packed or loaded.
+
+tools/desktop-clock-distribution.py splits pll_nes.PLL_inst/CLKOUT0 from the
+existing clk net, adds desktop_main_pll with CLOCK=1, and adds a virtual DCS
+desktop_main_distribution in static DCS_MODE=CLK0. CLKIN0 is the raw PLL net;
+CLKOUT retains the original clk bit and all original consumers. Other inputs,
+CLKSEL and SELFORCE are unconnected because this is a static selection.
+The vendor's local GW5A simulation library describes CLK0 as a pass-through;
+that is a logical primitive description, not proof of these packed fuses.
+
+The helper reproduces the exact tested PNR input. Reversing just the new cell,
+new net and PLL-output split yields exact equality with the baseline input.
+No renderer functions, PLL recipes, raster frequencies, or existing data
+connections were changed. Full placement/routing was rerun; existing physical
+data routes and placement are therefore not held constant in this experiment.
+No FPGA source RTL or external repository was modified. Colibri-SV conventions
+were consulted at 9715bdd701b148966d339b2749c29c24eca9a651 as a reference only;
+no third-party module or vendor source was copied into this change.
+
+## Build and hardware evidence
+
+Tool sources at this cycle:
+
+  nextpnr-mathieufro: 7ed099ec43d473f1264fdae4a2eff500350c4db9
+  apicula-mathieufro: 42810684a7995afc7d87567a69cbfe285dee9b71
+
+The seed-23 run retained the baseline CST, main PLL_R[0] site, and corrected
+50 / 74.25 / 21.49 MHz clock constraints. It finished normally, with zero
+setup/hold violation blocks and these final maxima:
+
+  keyboard_link.clk           126.55 MHz, required 50.00
+  desktop_sockets.pixel_clk   121.88 MHz, required 74.25
+  clk                         79.83 MHz, required 21.49
+
+The dedicated global router reports 'clk' net was routed and emits no main
+clock fabric-fallback warnings (943 in the baseline). Five warnings remain:
+one clk27 fallback and four hclk5 fallbacks. This establishes a successful
+route in the current model, not working physical clock distribution. It
+qualifies entry 41's broad explanation of the main-clock routing gap; the
+separate unresolved HDMI HCLK path remains open.
+
+The routed physical DCS with CLK0 mode is $PACKER_DCS_SPINE14 at X93Y54/DCS0.
+Three other reserved physical DCS cells have no mode or connections. Packer
+completed without a fuse/model refusal. Do not infer a working main clock
+merely from this logical/static mode or successful pack result.
+
+After a fresh user-confirmed power cycle, the agent loaded the separately
+staged desktop-clock-distribution.bin. tangload reported:
+
+  Usercode=0x00000000, status=0x00026230
+  tangload: core loaded
+
+All three subsequent fpga requests returned:
+
+  fpga: no answer on UART1 at 2000000 baud (is a core loaded?)
+
+The three tangini commands only reported the firmware configuration
+pmod0 vga_j2, pmod1 vga_j1, word 0x0230; they are not FPGA identity responses.
+An osd desk on command was sent after these checks but establishes no visual
+success. No clean console/desktop result was obtained. The agent proposed
+restoring the baseline, the user said stop, then explicitly requested only
+replacement of desktop.bin and desktop.fs without starting the core.
+The files were replaced as described above; the later user boot report is FAIL.
+
+Local generated artifacts and raw serial transcripts, all gitignored:
+
+  build/vga-regression/pnr-input-dcs.json
+    SHA256 03abb2922d06c4782b75a3577885f474c08eaad79ded76d424c772dd4ca41362
+  build/vga-regression/pnr-dcs.json
+    SHA256 f22aeb693574ed79b6b3c48d860563bc94ccc4fe47a6ff29dfd0290408519dcc
+  build/vga-regression/nextpnr-dcs.log
+    SHA256 9afc629e60222469bae5cc5a0c9f66aa09f14cc01428d11a08ed54daaa6b3211
+  build/vga-regression/report-dcs.json
+  build/vga-regression/pack-dcs.log
+  build/vga-regression/desktop-dcs.{fs,bin}
+  build/vga-regression/upload-dcs.txt
+  build/vga-regression/load-dcs.txt
+  build/vga-regression/replace-desktop-files.txt
+  build/vga-regression/nextpnr-global.log (CLOCK-only failed hold candidate)
+  build/vga-regression/probe-{pll,entry,bufg,bufg-exits,clock-sinks}.{py,txt}
+
+## Reproduction and validation
+
+From the repository root, using the locally preserved baseline input:
+
+  python3 tools/desktop-clock-distribution.py \
+    build/vga-diagnostic/baseline/pnr-input.json \
+    build/vga-regression/pnr-input-dcs.json
+  PYTHONHOME=/home/vash/oss-cad-suite \
+    /home/vash/tools/nextpnr-mathieufro/nextpnr-himbaechel \
+    --json build/vga-regression/pnr-input-dcs.json \
+    --write build/vga-regression/pnr-dcs.json \
+    --device GW5AST-LV138PG484AC1/I0 \
+    --vopt cst=build/vga-diagnostic/baseline/cst.cst \
+    --sdc build/vga-diagnostic/actual-clocks.sdc --timing-allow-fail \
+    --report build/vga-regression/report-dcs.json --seed 23 \
+    > build/vga-regression/nextpnr-dcs.log 2>&1
+  python3 tools/pnr-timing.py build/vga-regression/nextpnr-dcs.log \
+    --require-clock keyboard_link.clk=50 \
+    --require-clock desktop_sockets.pixel_clk=74.25 \
+    --require-clock clk=21.49 --require-dedicated-clock clk
+  PYTHONHOME=/home/vash/oss-cad-suite \
+    PYTHONPATH=/run/media/vash/GIT/apicula-mathieufro:/home/vash/tools/pydeps \
+    /home/vash/oss-cad-suite/py3bin/python3 -m apycula.gowin_pack \
+    -d GW5AST-138C -o build/vga-regression/desktop-dcs.fs \
+    build/vga-regression/pnr-dcs.json
+  python3 tools/fs-to-bin.py build/vga-regression/desktop-dcs.fs \
+    -o build/vga-regression/desktop-dcs.bin
+
+The input helper passed exact candidate regeneration and refusal checks for
+duplicate insertion, wrong PLL driver, already-routed input and an additional
+clock driver. The new optional dedicated-clock log gate passes this candidate
+and rejects the baseline, CLOCK-only candidate and a log missing main-clock
+route completion. Python compilation, shell syntax and git diff --check pass.
+The integrated full build script was not rerun; the candidate was built from
+the preserved baseline input using the commands above. Generated binaries,
+netlists and vendor database data are not committed.
+
+## Next investigation and preserved context
+
+First address the non-booting installed image and the experimental default
+with the user before resuming hardware tests. Review actual DCS input selection,
+clock-entry routes and packed static-mode fuses against independently traced
+vendor behavior; a physical clock failure is a hypothesis, not an established
+measurement. UART failure alone does not prove that the main clock stopped.
+Acceptance must include working FPGA identity, clean normal VGA, stable sync
+and valid timing, rather than accepting the routing/timing model alone.
+
+The earlier visually good but unstable-sync image remains evidence/desktop-open.bin
+(SHA256 fadd00bab669a4a1c3a5d2e9029fb48823cff50bc8adf38d032f4ff6caab069d).
+Its exact matching routed netlist was not recovered in this cycle. The scratch
+old-candidate and old-config artifacts do not establish an exact comparison:
+old-candidate packs a different binary; old-config.fs reconstructs main frames
+only and omits BRAM initialization/footer. Do not load that incomplete file.
+
+TinyTang's existing dirty THIRD_PARTY.md, pmod_sockets.cpp and tinydesk submodule,
+and Tang-Phosphor's existing dirty source/control/submodule files were preserved
+and are outside this commit. No firmware rebuild/flash, IP import or changes to
+those repositories were performed. HDMI HCLK, socket-retry consolidation and
+desktop patch consolidation remain outstanding as recorded in previous entries.

@@ -1409,3 +1409,37 @@ Compare actual mapped font/colour selection and coordinate alignment with the ex
 - User Test: PASS
 
 ---
+
+## 46 COMMIT Unreleased 2026-10-09T20:44:06-07:00
+
+#### Coming From:
+
+Unreleased 0294fbd
+
+#### Purpose:
+
+Investigate the VGA timing-placement regression by explicitly distributing the main PLL clock through the modeled global clock network and preserve the failed hardware result for handoff.
+
+#### Outcome:
+
+The CLOCK/BUFG plus static CLK0 DCS candidate passes modeled timing and packing but fails hardware: after a fresh user-confirmed power cycle, tangload reports core loaded and all three FPGA identity requests receive no UART1 response, and the user later reports that the installed core will not boot. The deterministic helper splits only the main PLL output and adds the distribution cell/net; renderer logic and clock recipes remain unchanged, while placement/routing is rerun at seed 23 with the baseline CST and actual-frequency constraints. Final maxima are 126.55 MHz at 50 MHz, 121.88 MHz at 74.25 MHz and 79.83 MHz at 21.49 MHz, with zero setup/hold violations and no main-clock fabric fallbacks, although five clk27/hclk5 warnings remain. This qualifies entry 41's broad main-clock routing explanation as an incomplete account of the model; successful modeled global routing does not prove a functioning physical clock or resolve HDMI. The failed binary is `3f8704bb97b707e0a6accbb595d409cbc6766ac73bc1e6c7ef46f88f4fb0363a`, 4,526,774 bytes, and its text bitstream is `f1b865c513f90b4320a27777c1fccf1c4023fa2d4f30ddfc05ca18e26fe92739`, 36,239,160 bytes. The user stopped the proposed baseline restoration, then explicitly directed replacement of `/cores/console138k/desktop.bin` and `desktop.fs` without starting the core; both transfers acknowledged exact sizes and the directory listing agreed, with no agent load/start during that replacement. No restoration was performed, and the baseline remains separately staged and preserved locally. The build scripts still select this failed experimental DCS path, which is recorded rather than presented as a working default. `evidence/desktop-clock-distribution.txt` preserves the current card state, tool revisions, reproduction, serial results, artifact identities, limits and recovery context; exact input regeneration, refusal/gate checks, Python compilation, shell syntax and whitespace checks passed. No new third-party source, firmware change or edits to TinyTang/Tang-Phosphor were introduced. The core-syntax audit re-read the directives and syntax, inspected the complete `.ai` diff, confirmed that only this appended entry changed and that `core.md` and settled history remain intact, and validated the header, six sections, prose, Status values, sequential numbering and 46-entry capacity.
+
+#### Next Steps:
+
+Hand off the failed installed image and experimental build integration for investigation of the actual DCS clock selection, routing and packed fuses; root cause remains unproved, and UART failure alone does not establish a stopped clock. Resume hardware work only in a subsequent user-directed cycle, preserve the separately staged baseline and require a fresh confirmed power cycle before any recovery load. Do not repeat the completed colour-pattern controls or accept clean STA as hardware success; eventual acceptance requires working FPGA identity, clean normal VGA and stable sync as well as valid timing. The separate HDMI HCLK failure, existing dirty TinyTang socket-retry changes and desktop patch consolidation remain open.
+
+#### Files Modified:
+
+- scripts/build-desktop-core.sh
+- scripts/pnr-desktop.sh
+- tools/desktop-clock-distribution.py
+- tools/pnr-timing.py
+- evidence/desktop-clock-distribution.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: FAIL
+- User Test: FAIL
+
+---

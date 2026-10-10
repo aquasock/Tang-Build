@@ -95,6 +95,8 @@ def main(argv):
     parser.add_argument("logs", nargs="+")
     parser.add_argument("--require-clock", action="append", default=[],
                         metavar="NAME=MHZ", help="require a reported clock at this frequency")
+    parser.add_argument("--require-dedicated-clock", action="append", default=[],
+                        metavar="NAME", help="require a completed global route with no fabric fallback")
     args = parser.parse_args(argv[1:])
     required = {}
     for item in args.require_clock:
@@ -132,6 +134,17 @@ def main(argv):
                 file_failed = True
                 actual = f"{fmax[name][1]:g} MHz" if name in fmax else "missing"
                 print(f"  FAIL required clock {name}: expected {mhz:g} MHz, got {actual}")
+
+        log = open(path, encoding="utf-8", errors="replace").read()
+        for name in args.require_dedicated_clock:
+            clock = re.escape(name)
+            routed = re.search(rf"^Info:\s+'{clock}' net was routed(?: using global resources only)?\.$",
+                               log, re.MULTILINE)
+            fallback = re.search(rf"^Warning: Failed to route net '{clock}' .* using dedicated routing\.$",
+                                 log, re.MULTILINE)
+            passed = bool(routed) and not fallback
+            file_failed |= not passed
+            print(f"  {'PASS' if passed else 'FAIL'} dedicated clock {name}")
 
         total = 0
         n_setup = 0
