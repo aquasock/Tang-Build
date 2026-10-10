@@ -1786,3 +1786,35 @@ None.
 - User Test: N/A
 
 ---
+
+## 58 COMMIT Unreleased 2026-10-10T10:03:45-07:00
+
+#### Coming From:
+
+Unreleased 8356d97
+
+#### Purpose:
+
+Build the clock-monitor instrument entry 57 chose, take it through the open flow to a violation-free bitstream, and read the desktop core's clocks back on the board so the timing model's claim about them can be checked against silicon.
+
+#### Outcome:
+
+The instrument exists, the flow builds it cleanly, and the clocks measure correct on hardware, with two repository defects found on the way and one of them fixed. The monitor itself is in TinyTang -- `fpga/desktop/clock_monitor.sv`, five free-running 32-bit counters read as read32 registers 0x120..0x130 with the stamp 0x134, wired by `third_party/patches/desktop/0002-clock-monitor.patch`, plus the BL616 commands `fpgar` and `fmon`; that work, its off-board simulation result and its commit `ea72e0f` are recorded in TinyTang's own log as entry 72, and because the changes are in that repository rather than this one the Files Modified here lists only this repository's paths. What this repository gained is the flow and the evidence. The build is `desktop.90d3fa3a84fa.bin` at 4,463,286 bytes with `desktop.1e465857f24d.fs`, content-stamped by `scripts/build-desktop-core.sh`, and it measures setup 0 and hold 0 with every clock passing -- but only once the PLLs are pinned, which is the first defect. A fresh reconstruct plus build at seed 17 with no constraint override refuses to find any violation-free placement and dies outright on seeds 23 and 29 with `Net hclk5 has no route to the FCLK of u_hdmi.hdmi.serializer.gwSer0`, because `TinyTang/fpga/desktop/desktop.cst` carried no `INS_LOC` PLL pins and the placer's free choice put `pll_nes` inside a row-108 clock gap; with `pll_nes` at `PLL_R[0]` the same tree has clean seeds 17 and 19, and the pins were the ones the board's working baseline (`build/vga-diagnostic/baseline`, `7b95d942`) was built with, preserved only in that build directory and in `build/desktop/reconstruct.jhpQys` and never committed. On the user's instruction those three pins are now in the committed constraint file, and the verification that the fix is complete is that a fresh reconstruction and build with no `PNR_CST` override reproduces `90d3fa3a84fa` and `1e465857f24d` byte for byte, so this repository can rebuild its own working core again. The second defect is in `scripts/build-desktop-core.sh` itself: the clock-topology gate ran `tools/clock-route-inventory.py` as a bare command under `set -e`, so any regression aborted the script before the next line read the exit code, which made the documented `ALLOW_UNVERIFIED_CLOCK` override unreachable on exactly the runs it exists for. Wrapping the invocation in `if` is the smallest change that makes the code do what its comment says, and with it the override works and the build above was produced. What the gate then said is itself the cycle's sharpest number: `clk: fabric fallbacks 943 -> 1199`, and the monitor adds exactly 256 `clk`-domain flops, 64 counters and 192 synchroniser, so every one rides fabric -- the chipdb gap entries 55 and 56 describe, restated as a measurement, which is why the build is labelled experimental even though its timing is clean. The routed skew for that placement is `clk` 4.077 ns over 1199 sinks, `desktop_sockets.pixel_clk` 0.209 ns and `hclk5` 2.759 ns, the pixel figure being the same one every build has shown. On the board, `fpgar` first proved the readback against the running baseline's own registers, `0x00` returning `0x00544453`, `0x04` returning `0x00010001` and `0x134` correctly absent with status 4, and then `tangload` loaded the monitor core and `fmon` ran three times with every run agreeing: `clk` 21.5038 to 21.5053 MHz against its 21.49 MHz constraint, `hclk` 74.2499 to 74.2500 MHz against its intended 74.25, the 50 MHz reference counting 500,235,740 cycles in 10,004 ms, both probes agreeing to about 0.007 percent and the 32-bit counters observed to wrap mid-measurement and still return the right delta. So the clocks are at their intended rates on silicon in an open-flow-built core, which is the question entry 57 asked and the model could not answer, and the small excess on `clk` is the design's own PLL dividing a 2000 MHz VCO by 93 rather than a fault. The user's part was the power cycle and the display was not reported; `User Test` is `NOT RUN` because the log's own rules say an agent-run device-side diagnostic is not user acceptance. `evidence/clock-monitor.txt` carries the raw output, the two defects, the skew report and the limits. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 58 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Ask the user what the screen shows with the monitor core loaded, since the display is the one result this cycle produced no evidence for, and record it in the next entry rather than here; the core is timing-clean but carries 1199 `clk` fabric fallbacks where the baseline had 943, so the expectation is the lined baseline's behaviour and not a repaired picture. Do not re-derive the placement search: `pll_nes` at `PLL_R[0]` with seed 17 or 19 is clean, the pins are now committed, and seed 23 is no longer the answer for this design. Do not rebuild the cst from artefacts; it is in the repository now. The open question the instrument was built to settle has an answer, so the next cycle should either spend it -- measuring a second core, or a build with different `clk` routing, and comparing against these figures -- or take up the chipdb modelling lead recorded in `evidence/clock-chipdb-ground-truth.txt`, which is unchanged and still the root cause of the 1199 fallbacks. The board is on the baseline after a power cycle, the monitor image stays on the card as `/cores/console138k/desktop-monitor.90d3fa3a84fa.bin`, and the uncommitted TinyTang socket-retry fix and deferred desktop patch consolidation remain open. One non-conformance is recorded rather than silently fixed: the project's own `tools/check_core_log.py` (run as this cycle's audit) reports TinyTang's active log as failing because its entries are numbered 41 through 72 instead of 1 onward, which `.ai/core-syntax.md` requires of an active log after a rollover; that is pre-existing, the pre-edit file fails identically, and entry 72 follows the log's own convention, but it is a real defect in a second repository's control metadata and a mechanical renumber is the correction.
+
+#### Files Modified:
+
+- scripts/build-desktop-core.sh
+- scripts/synth-desktop.ys
+- evidence/clock-monitor.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: NOT RUN
+
+---

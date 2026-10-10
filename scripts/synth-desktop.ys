@@ -78,6 +78,7 @@ read_slang --std 1800-2017 -U SYNTHESIS \
     src/iosys/textdisp_wide.sv \
     src/nes2hdmi.sv \
     src/nestang_top.sv \
+    src/desktop/clock_monitor.sv \
     src/desktop/desktop_regs.sv \
     src/desktop/desktop_pmod.sv \
     src/desktop/desktop_oled.sv \

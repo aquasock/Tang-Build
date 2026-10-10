@@ -134,9 +134,16 @@ fi
 # profile is exactly as unverified as that build is.  Only the board decides.
 log "=== 2c. clock topology check (vs the recorded profile) ==="
 topo=$tree/.open-pnr/clock-topology.txt
-"$PY" "$root/tools/clock-route-inventory.py" "$tree/.open-pnr/nextpnr.log" \
-    --compare "$root/evidence/desktop-clock-profile.json" > "$topo" 2>&1
-rc_topo=$?
+# Wrapped in `if` so `set -e` cannot abort before the exit code is read.  A
+# bare failing command here killed the script at the inventory, which made the
+# ALLOW_UNVERIFIED_CLOCK override below unreachable -- the override could never
+# be used on the one run it exists for.
+if "$PY" "$root/tools/clock-route-inventory.py" "$tree/.open-pnr/nextpnr.log" \
+    --compare "$root/evidence/desktop-clock-profile.json" > "$topo" 2>&1; then
+    rc_topo=0
+else
+    rc_topo=1
+fi
 sed 's/^/   /' "$topo"
 if (( rc_topo != 0 )); then
     log ""

@@ -1,0 +1,183 @@
+Clock monitor (core-log entry 57's instrument) -- build and off-board evidence
+2026-10-10T09:50-07:00
+
+Purpose
+-------
+Give the agent senses inside the fabric so the desktop core's clocks can be
+measured on silicon rather than inferred from the timing model.  Entry 57 chose
+cycle counters: no processor, no accelerator.  This file records what was
+built, what was verified off the board, and the two repository defects the work
+uncovered.  The on-silicon readback is not in this file -- it is the remaining
+step and needs the board.
+
+The instrument
+--------------
+fpga/desktop/clock_monitor.sv, instantiated by fpga/desktop/desktop_regs.sv,
+readable over the desktop register endpoint's read32 (frame type 0x10,
+opcode 1), which already existed:
+
+    0x120  clk_a    `clk` cycles, probe A   (read directly; clk is the read domain)
+    0x124  clk_b    `clk` cycles, probe B
+    0x128  pix_a    `hclk` cycles, probe A  (gray-synced into clk)
+    0x12c  pix_b    `hclk` cycles, probe B
+    0x130  ref_a    `sys_clk` (50 MHz crystal) cycles, gray-synced
+    0x134  4d4f4e31  "MON1" stamp
+
+Design choices, each for a reason: free-running so no reset net is added; gray
+code on the two cross-domain counters because a binary counter sampled mid-carry
+would hand the synchroniser a mixture (gray changes one bit per increment, so
+the two-flop capture is old-or-new); two probes per fabric-routed clock so a
+region the route failed to reach shows as a counter that stands still; and the
+50 MHz crystal as the only absolute reference.  Nothing is pinned -- the placer
+chooses where the probes land, per the operator's instruction.
+
+Off-board verification (tools/tests/test_desktop_core.sh, verilator)
+------------------------------------------------------------------
+The desktop core's own regression suite now exercises the monitor against the
+bench's three clocks -- 46.53 ns (21.492 MHz), 13.468 ns (74.25 MHz) and 20 ns
+(50 MHz) -- using the reference counter as the timebase:
+
+    clock monitor: clk=452041/ref=1051671 pix=1561740/ref=1051671 probes agree PASS
+    desktop UART: 56 register responses, ID, keyboard traffic and layer enable PASS
+    desktop responses: independent Python CRC check PASS
+    desktop video: VGA 1237500 raster pixels, HDMI 921600 visible pixels; no left-edge leak PASS
+    desktop core: reconstruction and affected regressions PASS
+
+  clk   452041/1051671 = 0.42984 = 21.492/50   (clk measured at 21.492 MHz)
+  pix  1561740/1051671 = 1.48501 = 74.25/50    (pixel measured at 74.25 MHz)
+
+Both probe pairs agree within 1%.  This is simulation, not the board: it proves
+the register map, the frame, the gray crossing and the arithmetic, and nothing
+about silicon.  The band in the bench is +/-1%, which absorbs the few hundred
+microseconds the sequential reads take.
+
+The firmware's request encoder was checked against the project's own
+independently-computed vector: tools/tests/fpga_ext_frame_test.cpp expects
+CRC bytes 73 17 for command 0x10 and payload
+01 02 10 02 00 00 00 20 12 34 56 78; the C implementation in
+ports/bl616/tang_fpga_uart.c reproduces 7317 exactly.
+
+Host side
+---------
+ports/bl616/tang_fpga_uart.c, TinyTang firmware:
+
+    fpgar <hex-addr>   read one desktop register over UART1 (read32)
+    fmon  [hold-ms]    read all five counters twice, print deltas and rates in Hz
+
+Firmware image: build/build_out/tinytang_bl616.bin, sha256 4d7051da...
+The pre-monitor firmware of this tree is e2205009...; the two commands are the
+only change.
+
+Build -- scripts/build-desktop-core.sh, content-stamped
+------------------------------------------------------
+    PNR_CST=<baseline cst> NEXTPNR_SEED=17 ALLOW_UNVERIFIED_CLOCK=1 \
+      scripts/build-desktop-core.sh <tree> <out>
+
+    desktop.1e465857f24d.fs   35,730,232 bytes
+    desktop.90d3fa3a84fa.bin   4,463,286 bytes   <- the card image
+
+Timing: setup 0, hold 0; clk 73.87 MHz against 21.49, pixel 111.94 against
+74.25, keyboard_link 145.69 against 50 -- all PASS.
+
+Routed skew (tools/clock-skew-report.py, the same placement):
+
+    net                           sinks    min_ns    max_ns   skew_ns
+    clk27                             1     2.626     2.626     0.000
+    keyboard_link.clk               414     1.877     1.877     0.000
+    hclk5                             4     9.678    12.437     2.759
+    clk                            1199     2.203     6.280     4.077
+    desktop_sockets.pixel_clk      1068     0.851     1.060     0.209
+
+The pixel clock's 0.209 ns is the same figure every build has shown, and clk's
+4.077 ns is the same order as the 4.389 ns recorded before this work.
+
+Defect 1 -- the committed CST cannot rebuild the working baseline
+----------------------------------------------------------------
+The baseline the board has been running (build/vga-diagnostic/baseline,
+7b95d942...) was built with three placement-macro pins that exist only in the
+preserved build artefacts -- build/vga-diagnostic/baseline/cst.cst and
+build/desktop/reconstruct.jhpQys/src/desktop/desktop.cst:
+
+    INS_LOC "pll_27.PLL_inst"   PLL_L[1];
+    INS_LOC "pll_hdmi.PLL_inst" PLL_L[3];
+    INS_LOC "pll_nes.PLL_inst"  PLL_R[0];
+
+TinyTang/fpga/desktop/desktop.cst has none of them.  Without the pin the open
+flow produces no violation-free placement: a clean eight-seed sweep
+(7,11,13,17,19,23,29,31) gave zero clean seeds and seeds 23 and 29 did not even
+route (`Net hclk5 has no route to the FCLK of u_hdmi.hdmi.serializer.gwSer0`).
+With pll_nes at PLL_R[0] the monitor build has clean seeds 17 and 19.  Same
+engine: nextpnr 2026-10-09 08:26 and apicula 4281068 both predate the baseline.
+The baseline's own pnr-input.json is 8,510 cells against today's 8,585, so the
+netlist drifted ~75 cells as well.  **Fixed on the operator's instruction:** the
+three `INS_LOC` pins now live in `TinyTang/fpga/desktop/desktop.cst`, and a
+fresh reconstruct + build at seed 17 with no `PNR_CST` override reproduces
+`desktop.90d3fa3a84fa.bin` / `desktop.1e465857f24d.fs` byte for byte, so this
+repository can again rebuild its own working core.  Note that the pin is a
+*placement* choice, not a repair: all 1199 `clk` fabric fallbacks remain.
+
+Defect 2 -- scripts/build-desktop-core.sh's clock override was dead code
+-----------------------------------------------------------------------
+Gate 2c ran `python3 tools/clock-route-inventory.py ...` as a bare command under
+`set -e` on line 31, then read `$?` on the next line.  A regressed topology made
+the inventory exit 1 and the shell abort before the exit code was read, so
+ALLOW_UNVERIFIED_CLOCK -- the documented way to pack an experimental bitstream --
+could never be reached.  Fixed by wrapping the invocation in `if`, which is the
+smallest change that makes the code do what its comment says.  With the fix the
+override works and the build above was produced.
+
+What gate 2c said, and why it is not a surprise
+-----------------------------------------------
+    CLOCK TOPOLOGY REGRESSED: clk: fabric fallbacks 943 -> 1199
+
+256 more, and the monitor adds exactly 256 clk-domain flops (64 counter + 192
+synchroniser).  Every one rides fabric, which is the chipdb gap entry 55/56
+describe stated back as a measurement: adding load to `clk` adds fabric
+fallbacks one for one.  The build is therefore labelled experimental -- the
+label is about the clock topology, not the timing, which is clean.
+
+On silicon -- the measurement
+----------------------------
+Firmware `4d7051da...` was flashed with `tools/tinytang_flash.py` and the board
+power-cycled, after which `fpgar` validated the readback against the baseline
+core's own registers before the monitor core was loaded:
+
+    fpgar 0    -> 0x00544453 status 0     (magic)
+    fpgar 4    -> 0x00010001 status 0     (ABI 1.1)
+    fpgar 100  -> 0x00180010 status 0     (fixed 24 x 16)
+    fpgar 134  -> 0x00000000 status 4     (no monitor in the baseline -- correct)
+
+Then `tangload /cores/console138k/desktop-monitor.90d3fa3a84fa.bin` reported
+`core loaded`, `fpgar 134` returned `0x4d4f4e31` status 0, and `fmon` was run
+three times.  Repeated measurements agree:
+
+    run 1  hold 10004 ms   clk 21503792 Hz  clk_b 21505312  pix 74249947  pix_b 74249948
+    run 2  hold  8005 ms   clk 21504984 Hz  clk_b 21505311  pix 74250045  pix_b 74249975
+    run 3  hold  8004 ms   clk 21503783 Hz  clk_b 21505322  pix 74250022  pix_b 74250032
+
+  clk   measured 21.504-21.505 MHz   constrained 21.49 MHz   ratio to ref 0.43007
+  pix   measured 74.2499-74.2500 MHz  intended 74.25 MHz      ratio to ref 1.48500
+  ref   500,235,740 cycles in 10,004 ms -> 50.0036 MHz (the crystal, nominal 50)
+
+Both probes agree to about 0.007% on both clocks, and the counters were seen to
+wrap mid-measurement (`ref 4260395265 -> 365666368` gave the correct delta), so
+the 32-bit wraparound path is exercised rather than assumed.
+
+Two readings are worth stating plainly.  First, **the clocks are at their
+intended rates on silicon in an open-flow-built desktop core**, which is the
+question entry 57 asked and the one the timing model could not answer; the model
+is pessimistic about *skew*, not about rate.  Second, `clk` measures ~21.505 MHz
+and not the 21.492 MHz the SDC names, which is not an error: the design's own
+PLL divides a 2000 MHz VCO by 93, so ~21.505 MHz is the frequency the part
+actually produces, and the constraint is the conservative one.
+
+`oled_frames` (0x108) and `oled_signature` (0x10c) both read 0 in this
+configuration, where VGA is on the PMOD and the OLED panel is not in play; the
+reading is recorded but establishes nothing either way about the screen.
+
+Not established here
+--------------------
+The screen was not reported by the user.  `User Test` is therefore `NOT RUN` in
+the log entry: an agent-run device-side readback is evidence about the clocks,
+and the log's own rules say it is not a substitute for user acceptance.
+
