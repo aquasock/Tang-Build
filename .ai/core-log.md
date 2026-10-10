@@ -2356,3 +2356,33 @@ No work remains on the HDMI or clock-model question, and the way back in is reco
 - User Test: N/A
 
 ---
+
+## 77 COMMIT Unreleased 2026-10-10T16:22:52-07:00
+
+#### Coming From:
+
+Unreleased 6c20df9
+
+#### Purpose:
+
+Record the result of reopening the HDMI and clock-model question on the user's direction, testing two modelled database defaults against a reproduced hardware-proven bitstream.
+
+#### Outcome:
+
+Entry 76 closed this question as characterised and unfixable from the vendor's data; the user then directed that a MODELLED PROJECT DEFAULT be added anyway and judged by the routing run and then by hardware, explicitly reversing TOOL-029's "nor by invention", and decided that this repository owns the resulting cycles. The ground truth the question needed was built first, because none of the earlier work had one: a `prepare-only` reconstruction of the design tree (the tree in hand predated `clock_monitor.sv` and failed synthesis outright with `ERROR: 'src/desktop/clock_monitor.sv': No such file or directory`), then `patches/0001-open-toolchain-portability.patch` applied to it, then `scripts/build-desktop-core.sh`. At `NEXTPNR_SEED=17` that flow produced, from these sources, a bitstream byte-identical to the hardware-proven one: `s17.core.bin`, sha256 `90d3fa3a84fa8cf80ca2d7d107fde9e00ac15b4362f34bba0d8ddeef53155718`, 4,463,286 bytes, matching the recorded `desktop-monitor.90d3fa3a84fa.bin`; loaded on the board it declared its sockets and answered `core 0x54 (ABI 1.1) has 0xc0 = 0x0230`. That run passes gate 2b with setup 0 and hold 0, and regresses gate 2c only in `clk` fabric fallbacks, 943 to 1199 -- exactly the 256 `clk`-domain flops the clock monitor adds, measured against a profile that predates it. Three errors of the agent's own were caught by this repository's instruments rather than by inspection, and are recorded so they cost nothing next time: skipping gate 2b, which packed a netlist with hold violations and made the user's VGA console render dark green and orange -- a build running by luck, not a core with wrong colours; routing at nextpnr's default seed instead of the flow's 23 or 17, which is what produced those violations; and routing a stale netlist from an earlier tree. Two modelled defaults were then built, each in a copy under `/tmp` with the fork left clean at `4281068`, and each tested through the same flow at seed 17: pips from every PLL cell's `MPLLCLKOUT0..6` into `HCLK_MUX_EPSILON<block><lane>`, and into `HCLK_TO_GCLK<block><lane>`, the latter chosen because the vendor's own bitstream at this block records `HCLK_MUX_ALPHA30 = HCLK_BUF_BO30` and the buffer's input chain is `HCLK_BUF_BI <- HCLK_MUX_BETA <- {L2HCLK, HCLK_TO_GCLK}`, so BETA is the entry the vendor uses. Both are refuted. Neither moves `hclk5` off fabric -- the clock topology of both is identical to the control's, `hclk5` fabric 4 sinks and `clk` fabric 1199 -- and both fail gate 2b, hold 3 and hold 2 respectively against the control's 0. The mechanism is now named rather than guessed: `create_hclk_switch_matrix` calls `create_reuse_wire(tt, src, "HCLK")` on every pip source, and `create_reuse_wire` OVERWRITES an existing wire's type, so a modelled pip from a PLL output is only taken by the clock router once the PLL's own output wire has been re-typed from `PLL_O` to `HCLK` -- and that re-typing destroys the PLL, yielding a core that configures and then answers nothing, which is exactly what the board showed. Sparing `PLL_O` keeps the PLL alive and makes the pips inert. No configuration of this idea wins, and the fix that spares `PLL_O` was separately verified inert for the control, whose architecture rebuilds byte-identically with and without it. No repository was modified by any of this; every build, database and bitstream lived under `/tmp`, and the board was returned to its working core.
+
+#### Next Steps:
+
+HDMI stands characterised as entry 76 concluded, and should be read that way: an open-flow build carries no HDMI, the configuration that rides `clk` and `hclk5` on general fabric is the one that passes the timing gate and reproduces the hardware-proven image byte for byte, and nothing should be chosen in the expectation that a build brings the display up. What is new is the record rather than the verdict: a reproduced ground truth, two refuted candidates with a named mechanism, and three methodology errors that the gates caught. A future attempt must use a different mechanism than a pip out of a PLL's clock output; a candidate that re-types a PLL's own wire cannot work, and one that does not will not be taken. Two smaller things are worth knowing: `create_reuse_wire`'s overwrite of an existing wire type is a hazard for any future modelled default, and the flow's seed, not nextpnr's default, is what decides whether a placement is timing-clean. The HDMI connector's pin map remains unrecorded in this reference, which any DDC or EDID work would need; the desktop core's OLED and audio paths remain unexercised; and the UART capture still drops the occasional byte.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---
