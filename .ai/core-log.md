@@ -1541,3 +1541,33 @@ Target gate coverage rather than clock insertion or spanning pips, since the con
 - User Test: NOT RUN
 
 ---
+
+## 50 COMMIT Unreleased 2026-10-09T21:36:14-07:00
+
+#### Coming From:
+
+Unreleased 703b00b
+
+#### Purpose:
+
+Record that the fabric clock fallback predates the desktop core and identify the mechanism that the early clock-smoke cycle left unexplained.
+
+#### Outcome:
+
+The user asked whether the clock trouble traces back to the project's own origin, having started the toolchain with the simplest design they could think of -- a blinking LED -- and the record confirms it. Every early bring-up log fails dedicated routing for its PLL-derived clocks while the raw input clock stays dedicated: `clock-smoke` reports 75 fallbacks on `clk27`, 74 on `clk_nes` and 1 on `hclk5`, with `hb_sys.clk` the only dedicated clock and `hclk` on global resources only; `clock-smoke-fix` reports 72, 71 and 1; `clock-smoke-repro` reports 75, 74 and 1; and `clock-smoke-panel` reports 151, 150 and 1 with `brd.clk` the only dedicated clock. The project knew and named it at the time, `evidence/clock-smoke-heartbeat.txt` calling it the usual fallback and `evidence/clock-smoke-panel.txt` section 5 recording that it is placement-dependent, that an unrelated I/O change can make it fail, and that it is the display's failure in miniature while remaining unexplained in mechanism. Cycle 48 supplies that mechanism: no clock pip anywhere on the GW5AST-138C is sourced from a PLL output wire, so a PLL clock always rides fabric and whether its fabric route reaches the CLKDIV is whatever placement gives it, which is also why the DCS build could force a dedicated path that the model accepts and the silicon does not implement. One correction to the framing is recorded because it changes the target: the `clk` loads on the proven baseline are not die-wide but occupy X118..179 and Y41..85 with the source at X177Y27, a single region straddling the clock plane's half boundary, so the operative property is span rather than size. `evidence/clock-fabric-fallback-origin.txt` carries the counts, the quotations and the limits. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 50 of the active log and a count within the 100-entry limit. This is a documentation-only cycle; no build, deployment or user test applied, and no FPGA RTL, firmware or third-party source was changed.
+
+#### Next Steps:
+
+Aim the next attempt at the half-boundary span rather than at a die-wide clock network: the source sits in the top half and most loads in the bottom half of the plane over roughly sixty columns and forty-five rows, and the question to answer is why no gate covers both. Do not repeat the spanning/bridge, all-dedicated or BUFG-insertion attempts. The board remains on the restored baseline; the VGA vertical-line defect, the HDMI HCLK failure, the uncommitted TinyTang socket-retry fix and the deferred desktop patch consolidation remain open, and any experimental bitstream that is loaded should be followed by a fresh power cycle and repeated console reads.
+
+#### Files Modified:
+
+- evidence/clock-fabric-fallback-origin.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

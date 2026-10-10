@@ -1,0 +1,87 @@
+# The fabric clock fallback is as old as the toolchain, and its mechanism is now known
+
+Recorded 2026-10-09, from a question the user raised about the project's own
+origin: they began this toolchain with the simplest design they could think of
+— a blinking LED — and suspected the clock trouble traces back to that. It
+does. This file records the evidence, the mechanism, and the correction to the
+framing that matters for any future attempt.
+
+## The fallback predates the desktop core
+
+The earliest bring-up designs each fail dedicated routing for their
+PLL-derived clocks, while the raw input clock routes dedicated. Counts of
+`Warning: Failed to route net '...' using dedicated routing`:
+
+| log | `clk27` | `clk_nes` | `hclk5` | dedicated clocks |
+|---|---|---|---|---|
+| `/home/vash/tools/clock-smoke/nextpnr.log` | 75 | 74 | 1 | `hb_sys.clk` only |
+| `/home/vash/tools/clock-smoke-fix/nextpnr.log` | 72 | 71 | 1 | `hb_sys.clk` only |
+| `/home/vash/tools/clock-smoke-repro/nextpnr.log` | 75 | 74 | 1 | `hb_sys.clk` only |
+| `/home/vash/tools/clock-smoke-panel/nextpnr.log` | 151 | 150 | 1 | `brd.clk` only |
+
+`hclk` is reported `routed using global resources only` in every one. So from
+the first design onward, every PLL output rode fabric. The project knew, and
+said so in its own words:
+
+- `evidence/clock-smoke-heartbeat.txt`: *"No timing failures. The
+  dedicated-router warnings are **the usual fallback**: 75 attempts on `clk27`,
+  74 on `clk_nes`, 1 on `hclk5`, all of which fabric-route..."*
+- `evidence/clock-smoke-panel.txt` section 5: *"the fabric fallback that
+  carries hclk5 to the CLKDIV can be made to fail by an unrelated change to the
+  I/O and a little sys_clk logic. **That is the display's failure in
+  miniature, and it is still un-explained in mechanism** — but it is bounded,
+  reproducible, and now measurable by a counter that either advances or does
+  not."*
+
+A blinking LED does not care about clock jitter or skew, so the fallback was
+invisible-by-irrelevance then. The desktop core did not create the defect; it
+inherited it and made it fatal — TMDS at 371 MHz, 8,435 flops.
+
+## The mechanism the early cycle left open
+
+Cycle 48 found it: **no clock pip anywhere on the GW5AST-138C is sourced from a
+PLL output wire.** A fabric PLL's outputs exist as `PLL_O` nodes
+(`MPLL4CLKOUT0` at tile `(27,177)`), but its output has no dedicated consumer;
+the plane's PLL-class inputs (`BLPLL0CLK0..3`) are a different family, at the
+central bridge `(54,88)/(54,93)`. nextpnr says the consequence itself:
+
+```
+Warning: Routing the clk net with the ordinary router: no clock gate reaches
+both its source and its loads.
+```
+
+That is why the fallback is universal and why it is *placement-dependent*: PLL
+clocks always ride fabric, so whether the fabric route reaches the CLKDIV is
+whatever placement gives them. The panel cycle's "unrelated I/O change" moved
+the placement, and the fabric route is the only route there is.
+
+It also explains the DCS build: it forced a *dedicated* path that the model
+accepts and the silicon does not implement, which is why a build that passed
+every check produced a board that would not boot.
+
+## Correction to the framing
+
+The `clk` loads on the hardware-proven baseline are **not die-wide**. From the
+943 failed dedicated routes in `build/vga-diagnostic/timed/nextpnr.log`:
+
+```
+sink X range 118..179     sink Y range 41..85     source X177Y27
+sinks per quadrant column band: 0-36:0  37-89:0  90-144:154  145-181:789
+```
+
+One region on the right of the die, straddling the clock plane's **half
+boundary** (row ~54, `spine_rows` for the halves). The operative word is
+**span**, not size: the source is in the top half and most loads are in the
+bottom half, so no single quadrant-local gate covers both. A fix aimed at
+"modelling a die-wide network" is aimed at the wrong shape; the shape is a
+half-boundary crossing over about 60 columns and 45 rows.
+
+## Limits
+
+- The clock-smoke logs are historical artifacts under `/home/vash/tools`; their
+  counts are quoted as found, not regenerated this cycle.
+- "No clock pip is sourced from a PLL output wire" is a property of the *model*
+  (the chipdb), established by enumerating `clock_pips`; it is evidence about
+  what nextpnr can route, not a direct measurement of the silicon.
+- Nothing here is a fix, and none of it substitutes for the board: a run that
+  passes every offline check is exactly as unverified as the profile's build is.
