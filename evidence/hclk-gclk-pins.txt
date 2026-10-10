@@ -1,0 +1,114 @@
+The HCLK block's global-clock pins are named and never wired -- and the vendor's table 38 carries them
+
+Cycle 2026-10-10. Base: Tang-Build `5deb24d`, apicula fork `4281068`, chipdb
+`57a1c2a5...`.  **No repository was modified.**  Everything is read from source,
+from the built database, or from the vendor's own `.fse`.
+
+This cycle was authorised as a **silicon** measurement -- put a counter on the
+bit clock and read it back through the 0x10 register channel, the instrument the
+clock monitor already uses.  Preparing it showed it cannot answer the question,
+and looking for one that could found the missing edge.
+
+## 1. Why a counter on the bit clock would not have discriminated
+
+Stated first, because it retracts the recommendation that chose this cycle.
+
+- **The rate is already measured.** `hclk` is the divider's *output* and
+  `hclk5` its *input*, so `hclk` reading 74.2496-74.2501 MHz on silicon over
+  four power cycles (BRD-009) already proves a fabric-routed 371.25 MHz arrives
+  at the divider correctly -- 74.250 x 5 = 371.25.  A counter on `hclk5` would
+  read the same rate and add nothing to it.
+- **A counter cannot see what is in question.**  The unmeasured hop is the last
+  one: the HCLK block's line output into the IOLOGIC's `FCLKA`, and the
+  serialiser's own 5:1 gearbox.  A lone flop has *one* clock pin, so inter-sink
+  skew -- 2.759 ns on a 2.6936 ns period, the thing that would break a gearbox
+  -- cannot appear in its count.  A fabric flop is not an OSER10 either.
+- **The wire itself is not observable.**  The undriven entry is a wire inside
+  the HCLK block primitive.  It is not in the netlist, so no host-side
+  instrument and no on-chip analyser reading design nets can reach it.
+
+So the instrument would have returned "371.25 MHz, correct" and left the
+question exactly where it was.
+
+## 2. The block's global-clock pins are named, and unconnected
+
+Read out of the built database.  Each HCLK block has eight global-clock pins,
+`HCLK_GCLK<i>0..7`, and the wirename table gives them real names -- the file's
+own comment calls them "HCLK->CLK and the GCLK pins".  In `hclk_pips`:
+
+    HCLK_GCLK30  id 684   driven NOWHERE   drives nothing
+    HCLK_GCLK31  id 685   driven NOWHERE   drives nothing
+    HCLK_GCLK34  id 688   driven NOWHERE   drives nothing
+    HCLK_GCLK37  id 691   driven NOWHERE   drives nothing
+    HCLK_GCLK_MUX30 id 726 driven NOWHERE  drives HCLK_TO_IHCLK30
+
+**Not one pip mentions them.**  The block's whole connection to the global
+clock is absent -- and with it the inter-HCLK ring's input, which the same dump
+shows is fed by `HCLK_GCLK_MUX30`, itself undriven.
+
+The asymmetry is the tell.  The *outbound* direction is fully modelled and
+table-driven:
+
+    HCLK_TO_GCLK30  id 586   <- HCLK_UNK564, 572, 582   at (81,181)
+                             -> HCLK_MUX_BETA30, 31, 32, 33
+
+`gw5_make_hclk_to_clk_gates` builds the HCLK-to-SPINE gates from real table-48
+rows with their fuses.  The inbound gate -- SPINE to HCLK -- has no counterpart
+in the generator, and the pins it would drive are the eight GCLK pins above.
+
+## 3. The vendor's table 38 carries the inbound gate
+
+Scanned every tile type in the device's `.fse`.  Rows whose **destination is a
+GCLK pin** exist, in the clock-mux table:
+
+    table 38  block 0  HCLK_GCLK06  <- 113..120   (ttyps 200, 212)
+    table 38  block 0  HCLK_GCLK07  <- 113..120   (ttyps 205, 217)
+    table 38  block 1  HCLK_GCLK10  <- 311..318   (ttyps 84)
+    table 48  block 1  HCLK_GCLK10  <- 304..306   (ttyps 274)
+
+Block 1's appears in **both** tables, which is the cross-namespace shape: table
+38 is the clock-mux table and its ids are clock-network ids, while the
+destination is an HCLK pin.
+
+**Why the generator drops them.**  `fse_clock_pips_138` reads table 38 and names
+*both* ends from `wirenames.clknames`.  The clock name table has no entry at
+these ids -- measured: `clknames[684]` through `clknames[691]` are all `None`,
+while `hclknames[684..691]` are `HCLK_GCLK30..37`.  So a row whose destination
+is an HCLK pin is read out of the clock table, named with a table that does not
+contain it, and never becomes an edge into the block.  That is the same failure
+the earlier cycles kept meeting from the other side: `hclk_pips` and
+`clock_pips` share only `VCC` as a name, because an id in the two tables means
+two different wires -- and these rows cross that boundary deliberately.
+
+## 4. What follows
+
+- The missing edge is **clock network -> the block's global-clock pin**, it is
+  written in the vendor's own tables, and the model loses it by naming the
+  destination out of the wrong namespace.  That makes it **measured data**, not
+  a guess, and it is the first candidate this project has had for the HDMI gap
+  that does not require inventing anything.
+- It also explains the whole shape of the model's defect without needing a
+  fuse-less default at all: the block's muxes are fed from wires whose driver is
+  the GCLK pin, and the GCLK pin has no edge in either direction.
+- **It is not yet implemented or tested.**  The change is in
+  `fse_clock_pips_138` and needs the destination id resolved against the HCLK
+  namespace with the block's offset, for the tile types that carry the rows
+  (200, 205, 212, 217, 84, 274 at least); then the database and the architecture
+  rebuilt, and then the desktop core **routed** -- because section 5 of
+  `evidence/hclk-inter-hclk-admission.txt` established that a raising gate is
+  not a result.  The acceptance measure is `Failed to route net 'hclk5'`
+  falling below four with `clk` falling from 1199.
+
+## Limits
+
+- Read from source and from the vendor's `.fse` only.  Nothing was built,
+  routed, packed or loaded, and no repository was changed.
+- The GCLK pin ids and the block offsets follow the model's own banding
+  (stride 187, six blocks); that the vendor's tables use the same banding is an
+  inference from the row ids, and the implementation is where it gets tested.
+- Only rows whose destination is one of the 48 GCLK pin ids were scanned.  Other
+  cross-namespace rows may exist that this scan does not cover.
+- The refutation in section 1 is about this instrument on this question.  It
+  does not weaken the case for measuring clocks on silicon in general -- the
+  clock monitor settled the factor-of-two question and the rate question, and
+  those measurements stand.
