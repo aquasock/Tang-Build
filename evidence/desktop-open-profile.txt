@@ -1,0 +1,97 @@
+The open-built desktop core: what works, and what does not
+2026-10-10
+
+Scope
+-----
+A profile of the core this project's own flow produces -- `desktop.bin` on the
+card, `desktop.90d3fa3a84fa.bin` / `desktop.1e465857f24d.fs`, built by
+`scripts/build-desktop-core.sh` at seed 17 with `pll_nes` pinned to `PLL_R[0]`,
+setup 0 and hold 0, no Gowin executable at any step.  Everything below is either
+measured on the board or reported by the user, and the two are marked
+separately.  The point of the profile is to say where this build stands, so the
+next cycle does not have to rediscover it.
+
+Build
+-----
+`desktop.90d3fa3a84fa.bin`, 4,463,286 bytes, `desktop.1e465857f24d.fs`; open
+flow only, and a fresh reconstruction with no constraint override reproduces
+both stamps byte for byte.
+
+Works, measured or verified over the two-wire console
+-----------------------------------------------------
+- Loads from the card with `tangload` and answers on UART1 at 2 Mbaud: `core 84`.
+- The register endpoint and the read32 map: 0x00 0x00544453, 0x04 0x00010001
+  (ABI 1.1), 0x08 0x0000000f, 0xc0 0x00000230, 0x100 0x00180010 (24x16), and
+  0x134 0x4d4f4e31 for the build's own marker.
+- The socket declaration is accepted and read back: `/tang.ini` says
+  `pmod0 vga_j2, pmod1 vga_j1`, word 0x0230, and the core reports
+  `core 0x54 (ABI 1.1) has 0xc0 = 0x0230, as declared`.
+- The clock monitor: five counters, both probes agreeing, 32-bit wraparound
+  exercised and correct.
+- The clocks on silicon: `clk` 21.5020 to 21.5053 MHz against its 21.49 MHz
+  constraint and `hclk` 74.2496 to 74.2501 MHz against 74.25, steady across four
+  power cycles.
+- **VGA: a perfect image, four power cycles out of four** (user).
+- The desktop layer and the console on screen (user), which is what the boot
+  script's `osd desk on` exists to produce.
+
+Does not work
+-------------
+- **HDMI: no signal.**  The user rebooted with both outputs connected and only
+  VGA came up.
+
+  This is the project's oldest display defect, and this cycle gives it something
+  it has never had: a **control**.  Same board, same monitor (the same panel on
+  both inputs), same cable, same firmware, same socket seating (0x0230), in the
+  same session -- and a core built by Gowin's own place-and-route
+  (`phosphortang.bin`, the Phosphor core) drives **both** VGA and HDMI
+  perfectly, mirrored, while this build drives only VGA.  With everything else
+  held constant, **the bitstream is the only variable**, so the defect is in the
+  open build and not in the board, the cable, the monitor, the firmware or the
+  seating.  Those five were live suspects and are now excluded by experiment
+  rather than by argument.
+
+  The mechanism is already located in `evidence/hclk-route-gap.txt` and this
+  build matches it: `hclk5`, the 371.25 MHz TMDS bit clock whose period is
+  2.6936 ns, fails dedicated routing at all four of its sinks here (4
+  `Failed to route net 'hclk5'` out of 1204 warnings) and its measured routed
+  skew is 2.759 ns -- more than one bit period.  The vendor's bitstream selects
+  the GAMMA input of the divider's mux, an HCLK-network wire, where ours selects
+  ALPHA/BETA fed by `L2HCLK`, the fabric entry -- and the network input is
+  modelled as unconnected in the chipdb, which is why nextpnr cannot select it.
+  The pixel clock explains the contrast in one line: it has zero fabric
+  fallbacks and 0.209 ns of skew, so VGA works.
+
+Expected zero, and not faults
+-----------------------------
+- `oled_frames` (0x108) and the cursor (0x114) read 0.  VGA is the selected
+  personality, so the OLED path is not driven; the registers are honest, not
+  broken.
+- `nesload` and ROM streaming do not apply: this core carries no NES machine.
+
+Not tested
+----------
+- The front USB-A keyboard link.  No keyboard was confirmed in the port, and the
+  link cannot be exercised from the console alone.
+- TinyDesk itself, run from the prompt.  The layer and the console on screen are
+  confirmed; the window manager is not separately reported here.
+
+A note on the readback tool
+---------------------------
+The firmware's `fpgar`/`fmon` read any core, not only this one: they answered
+the Phosphor core too.  But a register's *meaning* is per-core -- the Phosphor
+core's word at 0x00 is 0x54504830, not 0x00544453 -- so `fpgar` is a generic
+reader and only the desktop map is interpretable with what is documented here.
+
+The reference core, for contrast
+--------------------------------
+The Phosphor core works on this board and is worth recording as the working
+comparison, not as this project's output: it loads, answers as `core 80`
+(0x50) at ABI 1.10, declares the same socket word 0x0230, mirrors VGA and HDMI
+perfectly (user), plays the visualizer (user), and decodes and streams audio
+while reporting `10949 requests, 10948 responses, 1 timeout, 0 CRC errors,
+0 malformed`.  Its known limitation is the track advance -- one dropped file
+request ends a track -- and its audio has no sink in this seating, because I2S2
+needs a PMOD (PMOD-006) and both are VGA.  It is built by Gowin EDA
+(`build-merged.tcl` and `tang_phosphor_console138k.gprj`), which is exactly why
+its working HDMI does not discharge the open flow's HDMI question.
