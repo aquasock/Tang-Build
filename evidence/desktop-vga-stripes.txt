@@ -1,0 +1,144 @@
+# VGA vertical stripes: identical-routing white control
+
+Cycle date: 2026-10-09, America/Phoenix.
+
+## Symptom and controlled board result
+
+The user reports a stable desktop, console and Bluetooth across repeated cold
+boots, but vertical dark lines across the VGA picture on a Dell E772c CRT.
+The monitor reports H 44.9 kHz and V 59.9 Hz. The user reports that the picture
+was clean before the PLL placement/seed timing change of core-log entry 41.
+
+This cycle compared the running image with a constant-white derivative of its
+EXACT routed netlist. No synthesis, placement or routing change was allowed in
+the white derivative. The user power-cycled before each load.
+
+  original desktop: vertical dark lines (user report)
+  constant white:   "White field is clean; lines are gone" (user report)
+  original restored:"Desktop is back; the lines returned" (user report)
+
+This is a repeatable data-dependent symptom. It does not prove a compositor
+bug: constant white also removes RGB transitions, so a switching/output-path
+problem remains possible. The result does not establish a hardware fix.
+
+## Exact artifact identity and changes
+
+The baseline is /home/vash/tools/desktop-clean/desktop.bin:
+
+  bytes   4492268
+  SHA256  7b95d942925497e9a63267ae5d979dca3eb5e4367bc08c68a5a64bbdcb0f077b
+
+Its routed netlist was recovered from /tmp/pllseed/PLL_R_0_-23/pnr.json and
+preserved with the source netlist, CST, SDC and reports in this repository's
+gitignored build/vga-diagnostic/baseline/. Repacking it with the current fork
+reproduced the baseline .fs byte for byte:
+
+  .fs SHA256 84915457d3dcab4103d2d8f441ad351af639cd96beb993c6b3841d00cc9c8f56
+
+tools/make-vga-solid.py overrides fifteen dedicated LUTs at the D inputs of
+the fifteen RGB DFFREs, plus their shared synchronous-clear LUT. It refuses
+shared input LUTs or a clear that drives other logic. Its final comparison
+restores the old INIT values in memory and demands exact equality with the
+source JSON: every connection, cell, BEL and routed wire remains unchanged.
+It also writes a manifest identifying each changed LUT and both JSON hashes.
+
+White image:
+
+  bytes   4492268
+  SHA256  bbccefcb2c7002a1bde909d5ad870f9736a94ec9bcffcb91401c2a09f83e820c
+  card    /cores/console138k/desktop-vga-white.bin
+
+The same baseline was separately uploaded as
+/cores/console138k/desktop-vga-baseline.bin. The existing desktop.bin and boot
+configuration were preserved. Both uploads reported the full byte count.
+Both loads reported ID 0001081b, Usercode 0, status 00026230, core loaded and
+socket word 0x0230. Three fpga/tangini pairs after EACH load consistently
+reported core 84, ABI 1.1 and the declared VGA sockets. After restoration,
+osd desk on was applied and the user confirmed the desktop and original lines.
+Raw board output is in build/vga-diagnostic/board-{white,restored}.txt.
+
+## Clock checks corrected, without changing the baseline hardware
+
+The exact baseline's report tested these two clocks at nextpnr's default
+12 MHz: keyboard_link.clk (the 50 MHz board clock AFTER its IBUF) and
+desktop_sockets.pixel_clk (the 74.25 MHz CLKDIV output). The SDC only specified
+sys_clk, clk and hclk5; constraining the input port's net did not constrain the
+post-buffer net, and the pixel-clock alias had no constraint at all.
+
+scripts/pnr-desktop.sh now invokes tools/desktop-clock-constraints.py to append
+constraints at the PLL CLKIN/CLKOUT0 and CLKDIV CLKOUT pins. The helper refuses
+a changed PLL/divider recipe rather than silently applying old frequencies.
+The complete desktop build's timing gate now requires both domains at their
+real frequencies, plus the main clock at its existing 21.49 MHz constraint.
+tools/pnr-timing.py rejects a missing/wrong-frequency required domain even
+when the log's own verdict says PASS.
+
+Rerouting the unchanged source with PLL_R[0], seed 23 and corrected constraints:
+
+  clock                       modeled maximum   checked at
+  keyboard_link.clk           129.82 MHz        50.00 MHz
+  desktop_sockets.pixel_clk   115.83 MHz        74.25 MHz
+  clk                         74.97 MHz         21.49 MHz
+  setup violations            0
+  hold violations             0
+
+Compared with the baseline JSON: identical cell sets, zero connection changes,
+zero parameter changes, zero BEL changes and zero routing-string changes.
+This corrects the verification gap; it does not change the FPGA's behavior or
+explain the stripes. The acceptance result is limited to nextpnr's model.
+
+nextpnr's SDC parser in this fork supports create_clock and set_false_path,
+not set_output_delay. We did not invent a VGA output delay or claim that
+register-to-register timing checks establish the analog waveform's quality.
+The JSON critical-path report contains clocked paths, not a VGA pin report.
+
+The existing TinyTang tools/tests/test_desktop_video.sh was run against the
+actual reconstructed source used by this build. It passed all 1,237,500 VGA
+raster pixels and 921,600 visible HDMI pixels against its independent reference,
+including varying characters and foreground/background colours in every cell.
+This checks the RTL under ideal simulated clocks, not FPGA routing or analog
+output behavior. Clock-rate guard, changed-divider refusal, unrelated-clear
+refusal, five colour overrides and per-log verdict checks also passed.
+
+## Reproduction and remaining boundary
+
+From this repository's root, with an existing reconstructed desktop tree:
+
+  NEXTPNR_SEED=23 scripts/pnr-desktop.sh TREE
+  tools/pnr-timing.py TREE/.open-pnr/nextpnr.log \
+    --require-clock keyboard_link.clk=50 \
+    --require-clock desktop_sockets.pixel_clk=74.25 \
+    --require-clock clk=21.49
+  tools/make-vga-solid.py TREE/.open-pnr/pnr.json white.json --rgb ffffff
+
+Pack white.json with the fork's gowin_pack using the same environment as
+scripts/build-desktop-core.sh, with NO *_as_gpio options, then convert its .fs
+with tools/fs-to-bin.py. The manifest is the proof of unchanged routing.
+
+tools/inspect-vga-routing.py is a nextpnr post-route hook, selected with
+NEXTPNR_POST_ROUTE=/absolute/path/tools/inspect-vga-routing.py. It reports only
+interconnect delay and combinational depth, excluding LUT propagation,
+clock-to-Q and board delays. It follows RGB/raster registers, excluding clocked
+OLED, socket-control and constant sources. The structural cone can include
+other socket declarations/flips; these observations are not constraints or
+device limits.
+
+The hook completed on the corrected-clock build and recreated the baseline
+connections, parameters, BELs and routing again. Fourteen data/sync pin cones
+were reported. Longest structural interconnect-only paths from RGB/raster
+registers range from 4.002 to 7.340 ns, through three combinational stages.
+The longest cones reach the RGB MSB pins in row 108. These are structural
+maxima over supported declarations/flips, not selected-mode propagation
+measurements. In particular, some reported endpoints are reached from visible
+or from another colour through an inactive mux alternative. Do not interpret
+these numbers as measured analog settling or a demonstrated violation. The
+RGB/blanking/personality path is combinational between the scanout registers
+and the IOBUFs, and output waveform behavior still needs a changing-data test.
+The individual pin records are kept in build/vga-diagnostic/vga-interconnect.txt.
+
+Do not infer "pixel clock is too slow" from the old PASS-at-12 report: its
+modeled maximum already exceeded 74.25 MHz, and corrected constraints recreated
+the original routing. Do not infer that white being clean clears every dynamic
+output path. The next discriminator is a known changing pixel pattern bypassing
+the compositor, or a narrower isolation of the RGB register data and shared
+clear. Keep the original image for comparisons and power-cycle before loads.

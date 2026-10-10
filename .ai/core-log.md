@@ -1280,3 +1280,39 @@ The target is unchanged and now better described: model the HCLK interconnect in
 - User Test: PASS
 
 ---
+
+## 42 COMMIT Unreleased 2026-10-09T19:31:32-07:00
+
+#### Coming From:
+
+Unreleased d69ab3c
+
+#### Purpose:
+
+Diagnose the VGA vertical stripes that appeared after the timing placement change by checking the actual clock constraints and comparing an identical-routing solid-white image on the board.
+
+#### Outcome:
+
+The user's Dell E772c shows a repeatable data-dependent defect: the original desktop has vertical dark lines, a constant-white derivative is clean, and restoring the original brings the lines back, with a power cycle before each load. The baseline routed netlist was recovered from `/tmp/pllseed/PLL_R_0_-23/pnr.json`, preserved under `build/vga-diagnostic/baseline/`, and repacked byte-identically to the running `.fs` at `84915457d3dcab4103d2d8f441ad351af639cd96beb993c6b3841d00cc9c8f56`. `tools/make-vga-solid.py` changes only sixteen LUT INIT values, fifteen dedicated RGB register inputs and their shared synchronous clear, proving that all connections, BELs and routes remain intact; its white `.bin` is `bbccefcb2c7002a1bde909d5ad870f9736a94ec9bcffcb91401c2a09f83e820c`, 4,492,268 bytes. Both white and the preserved baseline `7b95d942925497e9a63267ae5d979dca3eb5e4367bc08c68a5a64bbdcb0f077b` were staged at separate card paths, loaded successfully, and checked with three consistent core-ID/socket read-back pairs each; the original desktop is restored and the boot image is preserved. The exact baseline report exposed a verification gap in entry 41's acceptance claim: the post-IBUF board clock and the pixel clock were both checked at nextpnr's default 12 MHz. The routing script now appends primitive-pin constraints for 50 MHz, 27 MHz and 74.25 MHz, refusing changed divider recipes, and the build gate requires the reported 50 MHz board, 74.25 MHz pixel and existing 21.49 MHz main constraints. Corrected-clock routing reproduced the baseline connections, parameters, BELs and routes exactly, with zero setup/hold violations and modeled maxima 129.82, 115.83 and 74.97 MHz respectively, so the constraint correction changes verification rather than the image. The pin-inspection hook completed on that same routing; its structural interconnect-only RGB/raster cones span 4.002 to 7.340 ns through three combinational stages, excluding LUT, clock-to-Q and board delays and including possible inactive declaration/flip alternatives, which is not a demonstrated violation. The existing source video regression passed all 1,237,500 VGA raster pixels and 921,600 visible HDMI pixels against an independent reference. These results leave both pixel-generation and switching/output-path effects possible: a clean constant does not establish correct RGB transitions, and the stripe defect is not fixed. `evidence/desktop-vga-stripes.txt` preserves the artifacts, commands, results and limits. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that only this appended entry changed there and that `core.md` and settled history are intact, and validated sequential numbering, the four-field header, six canonical sections, prose, allowed Status values and the 42-entry capacity. No new third-party source or intellectual property was introduced.
+
+#### Next Steps:
+
+Separate RGB register data from its shared clear, or drive a known changing pixel pattern while bypassing the compositor, to distinguish pixel generation from transition timing before selecting a hardware fix; do not repeat the flat-white test or treat the former 12 MHz check as proof of a slow pixel clock. Preserve the baseline for comparisons and power-cycle before loads. The missing HCLK interconnect, HDMI failure, uncommitted TinyTang socket-retry fix and deferred desktop patch consolidation remain open, and no FPGA RTL was changed in this cycle.
+
+#### Files Modified:
+
+- scripts/build-desktop-core.sh
+- scripts/pnr-desktop.sh
+- tools/desktop-clock-constraints.py
+- tools/inspect-vga-routing.py
+- tools/make-vga-solid.py
+- tools/pnr-timing.py
+- evidence/desktop-vga-stripes.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

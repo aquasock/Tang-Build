@@ -96,6 +96,11 @@ mkdir -p "$work"
 # ------------------------------------------------------------- constraints --
 # `//` -> `#`; nextpnr's SDC parser rejects the C++-style comment.
 sed 's|^\([[:space:]]*\)//|\1#|' "$sdc" > "$work/desktop.sdc"
+# The synthesized aliases differ from the RTL names: hclk becomes
+# desktop_sockets.pixel_clk, and the clock after the input buffer becomes
+# keyboard_link.clk. Constrain their primitive pins before placement so neither
+# domain silently inherits nextpnr's 12 MHz default.
+python3 "$here/../tools/desktop-clock-constraints.py" "$netlist" "$work/desktop.sdc"
 echo "timing constraints:"
 sed 's/^/    /' "$work/desktop.sdc"
 
@@ -193,12 +198,14 @@ echo "placing and routing"
 #
 #   NEXTPNR_SEED=7        fixed seed
 #   NEXTPNR_PLACER=heap   sa or heap
+#   NEXTPNR_POST_ROUTE=/absolute/path/hook.py   optional routing inspection
 #
 # The synthesised netlist does not depend on either, so a sweep over seeds only
 # has to re-place and re-route.
 pnr_extra=()
 [[ -n ${NEXTPNR_SEED:-} ]]   && pnr_extra+=(--seed "$NEXTPNR_SEED")
 [[ -n ${NEXTPNR_PLACER:-} ]] && pnr_extra+=(--placer "$NEXTPNR_PLACER")
+[[ -n ${NEXTPNR_POST_ROUTE:-} ]] && pnr_extra+=(--post-route "$NEXTPNR_POST_ROUTE")
 
 set +e
 "$nextpnr" \

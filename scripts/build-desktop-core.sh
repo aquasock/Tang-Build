@@ -88,7 +88,10 @@ bash "$here/pnr-desktop.sh" "$tree" "$tree/nestang-top-open.json"
 # and refuse to pack.  tools/pnr-timing.py explains why this reads the log:
 # hold violations appear in no structured field of nextpnr's report.
 log "=== 2b. timing gate (seed $SEED) ==="
-if ! "$PY" "$root/tools/pnr-timing.py" "$tree/.open-pnr/nextpnr.log"; then
+if ! "$PY" "$root/tools/pnr-timing.py" "$tree/.open-pnr/nextpnr.log" \
+    --require-clock keyboard_link.clk=50 \
+    --require-clock desktop_sockets.pixel_clk=74.25 \
+    --require-clock clk=21.49; then
     log ""
     log "REFUSING TO PACK: the place-and-route has timing violations."
     log "A bitstream from this netlist is not one to put on the board."

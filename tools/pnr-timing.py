@@ -2,6 +2,7 @@
 """Read a nextpnr log and report its timing: what passed, what violated.
 
     tools/pnr-timing.py build/pnr.log [more.log ...]
+        --require-clock desktop_sockets.pixel_clk=74.25
 
 Exits 0 when every clock passed and there is no setup or hold violation, 1 when
 anything violated, 2 when the log could not be read at all.  That exit code is
@@ -13,7 +14,8 @@ desktop-core bitstream is this tool's exit code rather than nextpnr's.
 Why the log and not the JSON report: `--report` writes `fmax`, `critical_paths`
 and `utilization`, and `critical_paths` holds the worst *setup* paths only.
 Hold violations appear in no structured field -- they are text in the log -- and
-hold is the failure this core actually has.
+hold is the failure this core actually has. Required-clock checks also reject a
+missing domain or a clock inadvertently checked at the 12 MHz default.
 
 A violation block looks like this, one per violated path:
 
@@ -33,6 +35,8 @@ general fabric rather than the dedicated network.
 SPDX-License-Identifier: MIT
 """
 
+import argparse
+import math
 import re
 import sys
 from collections import defaultdict
@@ -87,12 +91,25 @@ def analyse(path):
 
 
 def main(argv):
-    if len(argv) < 2:
-        print(__doc__.split("\n\n")[1], file=sys.stderr)
-        return 2
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("logs", nargs="+")
+    parser.add_argument("--require-clock", action="append", default=[],
+                        metavar="NAME=MHZ", help="require a reported clock at this frequency")
+    args = parser.parse_args(argv[1:])
+    required = {}
+    for item in args.require_clock:
+        try:
+            name, mhz = item.rsplit("=", 1)
+            mhz = float(mhz)
+            if not name or not math.isfinite(mhz) or mhz <= 0:
+                raise ValueError()
+            required[name] = mhz
+        except ValueError:
+            parser.error("--require-clock must be NAME=positive-MHz")
 
     failed = False
-    for path in argv[1:]:
+    for path in args.logs:
+        file_failed = False
         try:
             fmax, viols = analyse(path)
         except OSError as e:
@@ -107,8 +124,14 @@ def main(argv):
         for name in sorted(fmax):
             achieved, constraint, verdict = fmax[name]
             if verdict == "FAIL":
-                failed = True
+                file_failed = True
             print(f"  {verdict:4} {name:32} {achieved:8.2f} MHz  (constraint {constraint:g} MHz)")
+
+        for name, mhz in required.items():
+            if name not in fmax or abs(fmax[name][1] - mhz) > 0.02:
+                file_failed = True
+                actual = f"{fmax[name][1]:g} MHz" if name in fmax else "missing"
+                print(f"  FAIL required clock {name}: expected {mhz:g} MHz, got {actual}")
 
         total = 0
         n_setup = 0
@@ -124,7 +147,7 @@ def main(argv):
             worst_slack = min(worst_slack, v["worst"])
             worst_skew = min(worst_skew, v["skew"])
             if n:
-                failed = True
+                file_failed = True
             print(f"  {'FAIL' if n else 'PASS'} {name:32} setup {v['setup']:3d}  hold {v['hold']:3d}"
                   f"  worst {v['worst']:+.3f} ns  clk-skew {v['skew']:+.3f} ns")
 
@@ -133,7 +156,8 @@ def main(argv):
 
         # One machine-readable line, because a clock name may contain a space
         # (`posedge clk`) and parsing the rows above by column is fragile.
-        verdict = "fail" if (failed or total) else "pass"
+        failed |= file_failed
+        verdict = "fail" if file_failed else "pass"
         print(f"  summary: {verdict} setup={n_setup} hold={n_hold}"
               f" worst_slack={worst_slack:.3f} worst_skew={worst_skew:.3f}")
 
