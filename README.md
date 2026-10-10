@@ -18,7 +18,13 @@ place-and-route takes the 371.25 MHz TMDS bit clock off the dedicated HCLK
 network, while the open flow's model leaves that network input undriven, so the
 bit clock is left on general fabric at all four serialiser sinks and at some
 placements cannot be routed at all.  That is a gap in the device database's
-clock model, not a change the design needs.
+clock model, not a change the design needs — and that gap is now **closed as
+characterised rather than fixed**: the HCLK block that serves this core has no
+clock entry anywhere in the vendor's own device tables, and every change this
+project can make to the generated model either moves no route at all or costs
+the pixel clock a thousand of them.  An open-flow build does not carry HDMI, and
+nothing here should be expected to change that until a measured clock entry
+exists — [`evidence/hclk-gclk-inbound-gate.txt`](evidence/hclk-gclk-inbound-gate.txt).
 
 ## Why this matters
 
@@ -72,6 +78,12 @@ Verilog  --yosys-->  JSON  --nextpnr-himbaechel-->  routed JSON  --gowin_pack-->
       [`evidence/hdmi-flow-controlled.txt`](evidence/hdmi-flow-controlled.txt),
       [`evidence/hclk-epsilon-undriven.txt`](evidence/hclk-epsilon-undriven.txt),
       [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt)
+      — and that work is **closed as characterised rather than fixed**: the
+      clock entry the model needs is not in the vendor's own tables for the
+      block this core uses, and no change this project can make to the model
+      today moves the route.  **HDMI on the open flow is out of scope until a
+      measured clock entry exists**
+      ([`evidence/hclk-gclk-inbound-gate.txt`](evidence/hclk-gclk-inbound-gate.txt))
 - [x] `.fs` → `.bin` conversion, so open-built cores load from the SD card
       through TinyTang's existing `tangload` —
       [`tools/fs-to-bin.py`](tools/fs-to-bin.py), validated by reproducing
@@ -136,8 +148,11 @@ Not verified, and stated plainly in [`FINDINGS.md`](FINDINGS.md):
   same RTL through both flows gives colour on one and none on the other — and it
   is located in the clock model: the vendor routes the 371.25 MHz TMDS bit clock
   off the dedicated HCLK network, and the open flow's model leaves that network
-  input undriven, so the bit clock rides general fabric.  Fixing it is a device
-  database job, not a design change —
+  input undriven, so the bit clock rides general fabric.  **It is closed as characterised
+  rather than fixed**: the entry the model needs is not in the vendor's own
+  tables for the block this core uses, and every model change available either
+  moves no route or loses the pixel clock's —
+  [`evidence/hclk-gclk-inbound-gate.txt`](evidence/hclk-gclk-inbound-gate.txt),
   [`evidence/hdmi-flow-controlled.txt`](evidence/hdmi-flow-controlled.txt),
   [`evidence/hclk-epsilon-undriven.txt`](evidence/hclk-epsilon-undriven.txt);
   [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt)

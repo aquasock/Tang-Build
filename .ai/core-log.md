@@ -2326,3 +2326,33 @@ Choose between the two things that remain, because the model-side avenue is now 
 - User Test: N/A
 
 ---
+
+## 76 COMMIT Unreleased 2026-10-10T13:18:53-07:00
+
+#### Coming From:
+
+Unreleased a1eaf84
+
+#### Purpose:
+
+Close the HDMI and clock-model issue at the user's direction, recording the position in the repository's public documents rather than leaving it to the log.
+
+#### Outcome:
+
+The issue is closed as characterised rather than fixed, and the closure is now in the documents a reader starts from. The README says it in the three places that matter: the opening paragraph ends on the finding that the HCLK block serving this core has no clock entry anywhere in the vendor's own device tables and that every change this project can make to the generated model either moves no route or costs the pixel clock a thousand of them, the HDMI status item ends on the same statement with the note that HDMI on the open flow is out of scope until a measured clock entry exists, and the not-verified section's HDMI bullet was re-pointed from "a device database job" to the closure so that a future reader is not sent to work the log has already carried to a measured end. The reference gained **TOOL-031**, which records the whole finding in one place: the modelled HCLK network has no entry into any block, with each block's eight global-clock pins named by the wirename table and appearing in no pip at all, the inter-HCLK ring closed at both ends, and the block that serves this project's design driven by a wire nothing drives; that the vendor's own data carries an inbound gate but only for blocks 0 and 1, at tile types 200, 205, 212, 217, 84 and 274, while the block this design uses is tile type 276 and carries none; that implementing the fix was measured both ways and that preferring any HCLK-ish name is a regression costing the pixel clock 1068 routes while preferring only structural names is inert; and that the two generator defects remain known and unfixed, the unreachable inter-HCLK branch and the five unwalked bridge cells. It also carries the lesson the last three cycles paid for: the acceptance test for a change in this area is the route, not the spanning count, which a naming accident can raise without moving any route. One correction is recorded here rather than left to stand, and it is this project's own error: TOOL-029's consequence clause asserted that `.ai/core.md` forbids inventing chipdb entries, and that file carries no such rule -- its licence section asks only that licensing and attribution be respected and that the user be told when intellectual property is used -- so the clause now names the rule that actually binds, this reference's own, that a project or diagnostic choice is never recorded as a device limit and nothing is recorded that has not been looked up. The same unsupported attribution appears in settled log entries 64 to 66 and 70, which cannot be rewritten and are left as the record of what was believed at the time. Nothing was built, loaded or changed on the board, no source, chipdb or bitstream changed, and the apicula fork remains clean at `4281068` with its chipdb byte-identical; the two generator defects are recorded rather than fixed, deliberately, so that whoever takes them up starts from a clean fork. The reference audits clean at 169 records with the index covering all of them, unique identifiers, the full key set and allowed statuses, and its review date is unchanged at 2026-10-10. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that `core-reference.md` and this appended entry are the only `.ai` changes, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 76 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+No work remains on the HDMI or clock-model question, and the way back in is recorded rather than remembered: TOOL-031 names the finding, the defects and the acceptance test, and the four evidence files behind it are `hclk-entry-path.txt`, `hclk-inter-hclk-admission.txt`, `hclk-gclk-pins.txt` and `hclk-gclk-inbound-gate.txt`. If anyone returns, the two things not to repeat are the broad namespace preference, which costs the clock plane 1068 routes, and treating a rising spanning count as a result. The purpose this project was started for is otherwise met and should be read that way: the open flow places, routes, packs, loads and runs, the clocks measure correct on silicon, VGA renders perfectly, Phosphor plays with video and audio, and the `.fs` to `.bin` path is validated; the one gap is characterised to a wire inside one primitive and is out of scope until a measured clock entry exists. What is left is the smaller work, and it is real rather than cosmetic: the TinyTang socket-retry fix, which sits uncommitted in that repository; the TinyTang active-log numbering non-conformance, which is a mechanical renumber; and the HDMI connector's pin map, which this repository's reference does not record and which any future DDC or EDID work would need. The desktop core's OLED and audio paths also remain unexercised, and the UART capture still drops the occasional byte.
+
+#### Files Modified:
+
+- README.md
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---
