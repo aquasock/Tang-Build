@@ -1665,3 +1665,33 @@ Build the current tree with the VGA output phase corrected and test it on the CR
 - User Test: PASS
 
 ---
+
+## 54 COMMIT Unreleased 2026-10-10T07:40:48-07:00
+
+#### Coming From:
+
+Unreleased 41a2593
+
+#### Purpose:
+
+Stamp every build with its own content hash and emit the loadable binary, so no future artefact can be as untraceable as the one this session lost a cycle to.
+
+#### Outcome:
+
+`scripts/build-desktop-core.sh` now ends with a provenance step that names every build after its own contents and emits the binary as well as the text bitstream. The stamp is the first twelve hexadecimal characters of the artefact's own sha256 -- `desktop.<binhash>.bin` and `desktop.<fshash>.fs` -- which is this project's existing prose shorthand written into the filename, so the name is the identity and two builds with the same name are the same bytes. A commit-based stamp was written first and rejected: it ties the name to a working tree that is dirty, local and unreproducible for anyone else, whereas a content hash says what the artefact is. Nothing hashes on the board; the BL616 only ever receives a byte stream, and the stamp is computed once at build time on the host. The plain `desktop.fs` and `desktop.bin` names are still written because the card's boot path and other tools expect them, and the binary is now produced by the flow at all -- previously only the `.fs` was packed, which is why a card-ready image always needed a manual conversion. Verified by running a full build end to end: it produced `desktop.7b95d9429254.bin` and `desktop.84915457d3dc.fs`, whose stamps are exactly the identifiers this log already uses for that build (`7b95d942` and `84915457`), which both validates the scheme and confirms the build was the one expected. This is the change that makes the next cycle possible: a sweep is about to generate many candidate placements, and without stamped artefacts their results would be as lost as `fadd00ba`'s were. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 54 of the active log and a count within the 100-entry limit. No FPGA RTL, firmware or third-party source was changed.
+
+#### Next Steps:
+
+Generate a set of candidate placements in parallel, stamp each, and have the user load them and rank them on the CRT, because placement is the only variable that has changed the outcome so far -- good, lined and dead from three different placements -- and the timing model is now itself suspect, since the vendor's own site scores hold violations in our model while Gowin ships that placement. Record each candidate's stamp, its violation counts and the user's verdict together, so the results accumulate instead of being lost. Do not repeat the mode, PLL-site-alone, spanning-pip, all-dedicated, BUFG-insertion or contention attempts. The board is left running the perfect reference build; the HDMI HCLK failure, the uncommitted TinyTang socket-retry fix and the deferred desktop patch consolidation remain open.
+
+#### Files Modified:
+
+- scripts/build-desktop-core.sh
+
+#### Status:
+
+- Build: PASS
+- Deployment: NOT RUN
+- User Test: NOT RUN
+
+---

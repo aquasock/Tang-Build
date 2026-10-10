@@ -166,3 +166,39 @@ else
     log "   NO BITSTREAM"
     exit 1
 fi
+
+# ------------------------------------------------------- 4. provenance stamp
+# Name every build after its own contents, and emit the binary too.
+#
+# Why: the vertical-line hunt lost a cycle to `evidence/desktop-open.bin`
+# (`fadd00ba...`) -- an artefact that renders the display perfectly and whose
+# source nobody recorded.  Recovering it meant guessing at a reconstruction,
+# and guessing failed.  A stamped copy of every build makes that situation
+# impossible.
+#
+# The stamp is the first 12 hex characters of the artefact's own sha256, which
+# is this project's existing convention in prose (`7b95d942`, `84915457`,
+# `fadd00ba`) written into the filename.  It is content-addressed, so the name
+# IS the identity and two builds with the same name are the same bits; it says
+# nothing about anyone's repository or working tree; and it is computed here,
+# on the host.  Nothing hashes on the board -- the BL616 only ever receives a
+# byte stream.
+#
+# The plain `desktop.fs` / `desktop.bin` names are still written, because the
+# card's boot path and other tools expect them.
+get_bin() {
+    "$PY" "$root/tools/fs-to-bin.py" "$out/desktop.fs" -o "$out/desktop.bin" \
+        > /dev/null 2>&1 || { log "   bin conversion failed"; exit 1; }
+}
+short() { sha256sum "$1" | cut -c1-12; }
+get_bin
+BINHASH=$(short "$out/desktop.bin")
+FSHASH=$(short "$out/desktop.fs")
+log ""
+log "=== 4. provenance stamp ==="
+cp -f "$out/desktop.bin" "$out/desktop.$BINHASH.bin"
+cp -f "$out/desktop.fs"  "$out/desktop.$FSHASH.fs"
+ls -l "$out/desktop.$BINHASH.bin" "$out/desktop.$FSHASH.fs" | sed 's/^/   /'
+log "   desktop.$BINHASH.bin  <- put this on the card for tangload"
+log "   desktop.$FSHASH.fs  <- this one is for openFPGALoader"
+log "   record both stamps, and the pair, in the log entry for this build."
