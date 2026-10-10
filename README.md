@@ -9,14 +9,16 @@ The short version: on 2026-10-08 a bitstream produced by `yosys` →
 Tang Console 138K and talked over its UART.  The project's own desktop core now
 goes through the whole flow with the same tools — it places, routes, packs,
 loads over both JTAG and `tangload`, and runs on the board, answering on UART1
-at 2 Mbaud.  Its HDMI output is the one thing that does not yet work, and the
-reason is located rather than guessed: on this die an IOLOGIC's fast clock can
-only be selected from lanes 0 and 2, the three TMDS serialisers were served by
-lanes 1 and 3, and the packer dropped the unencodable lane without a word —
-leaving each serialiser's clock mux unselected, so no TMDS left the part.  The
-flow now offers an IOLOGIC only the encodable lanes, and the resulting
-bitstream carries the selection where the previous one carried none; the
-display itself is still to be confirmed on the board.
+at 2 Mbaud.  It renders its picture over **VGA**, on hardware and repeatedly.
+Its **HDMI** output is the one thing that does not work, and the reason is now
+isolated by experiment rather than guessed: the same RTL through the vendor flow
+produces colour and through the open flow produces none, so the flow is the
+variable.  The mechanism is located in the clock model — the vendor's
+place-and-route takes the 371.25 MHz TMDS bit clock off the dedicated HCLK
+network, while the open flow's model leaves that network input undriven, so the
+bit clock is left on general fabric at all four serialiser sinks and at some
+placements cannot be routed at all.  That is a gap in the device database's
+clock model, not a change the design needs.
 
 ## Why this matters
 
@@ -46,14 +48,29 @@ Verilog  --yosys-->  JSON  --nextpnr-himbaechel-->  routed JSON  --gowin_pack-->
       database regenerated from the local Gowin install carries `hclk_pips`
       171, `io2hclk` 6, `hclk_div2` 6 and `HAS_5A_HCLK`, where the published
       one has zero of each, so the PLLs place and the whole design routes.
-- [ ] …**and runs with a display.**  The core runs — loaded over two-wire
-      `tangload`, it answers on UART1 at 2 Mbaud after a full SRAM erase, and
-      the console returns to its prompt — but its HDMI output produces no
-      signal.  What is *not* the cause is now established: the build's clock
-      and pad configuration at the three TMDS serialisers matches the vendor's
-      (`FCLK` present and sourced from `HCLK0` at all three, `PCLK` likewise),
-      the PLL frequencies are right, and the bitstream is byte-reproducible.
-      The difference from the vendor's build is somewhere else, and is open —
+- [x] …**and renders a picture, over VGA.**  The same core drives the PmodVGA
+      output — the 74.25 MHz `hclk` pixel domain on plain I/O pins — and the
+      TinyDesk console holds on the monitor.  The user has confirmed the
+      picture repeatedly, and four power cycles rendered perfectly
+      ([`evidence/desktop-vga-display.txt`](evidence/desktop-vga-display.txt),
+      [`evidence/clock-monitor.txt`](evidence/clock-monitor.txt))
+- [ ] …**and over HDMI.**  The same raster, serialised: it needs the three
+      OSER10 serialisers and the 371.25 MHz `hclk5` bit clock that feeds them,
+      and no open-flow build tested produces a signal on it.  What is *not* the
+      cause is established: the build's clock and pad configuration at the
+      serialisers matches the vendor's (`FCLK` present and sourced from `HCLK0`
+      at all three, `PCLK` likewise), the PLL frequencies are right, the clocks
+      measure correct on silicon, and the bitstream is byte-reproducible.  The
+      flow *is* the difference, and that is now a controlled result rather than
+      an inference — the same RTL through the vendor flow gives colour video
+      where the open flow gives none — with the mechanism in the clock model:
+      the vendor takes the bit clock off the dedicated HCLK network and the
+      open flow's model leaves that network input undriven, so `hclk5` fails
+      dedicated routing at all four of its sinks and at some placements cannot
+      be routed at all.  The remaining work is therefore in the device
+      database's clock model —
+      [`evidence/hdmi-flow-controlled.txt`](evidence/hdmi-flow-controlled.txt),
+      [`evidence/hclk-epsilon-undriven.txt`](evidence/hclk-epsilon-undriven.txt),
       [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt)
 - [x] `.fs` → `.bin` conversion, so open-built cores load from the SD card
       through TinyTang's existing `tangload` —
@@ -94,7 +111,11 @@ Verified on hardware, with the raw bytes kept under `evidence/`:
   board **twice over**: as a `.bin` through TinyTang's `tangload` in two-wire
   mode, and earlier as a `.fs` over JTAG.  It runs — the console reports
   `core 84 answering on UART1 at 2000000 baud` and returns to its prompt with
-  no hang (`evidence/desktop-2wire-cycle.txt`)
+  no hang (`evidence/desktop-2wire-cycle.txt`).  On this build the display
+  also comes up: the TinyDesk console appears over **VGA** on a 1280x720 raster
+  and holds, the user has read the console off it repeatedly, and four power
+  cycles all rendered perfectly (`evidence/desktop-vga-display.txt`,
+  `evidence/clock-monitor.txt`)
 - the **`.fs` → `.bin` path is exercised, not merely written**:
   `tools/fs-to-bin.py` reproduces Gowin's own `.bin` from Gowin's own `.fs`
   byte for byte (`sha256 c8406c7f…`, `cmp` clean), and the file it produces
@@ -108,12 +129,19 @@ Verified on hardware, with the raw bytes kept under `evidence/`:
 
 Not verified, and stated plainly in [`FINDINGS.md`](FINDINGS.md):
 
-- **the display.**  The desktop core runs, but its HDMI output produces no
-  signal, and the reason is no longer thought to be at the serialisers: the
-  clock and pad configuration there matches the vendor's, `FCLK` included.  What
-  differs from the vendor's build is elsewhere and is not yet located — see
-  [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt),
-  sections 11 onwards, which supersede the earlier reading in that file
+- **HDMI.**  The desktop core runs and drives VGA, but its HDMI output
+  produces no signal, and the reason is no longer thought to be at the
+  serialisers: the clock and pad configuration there matches the vendor's,
+  `FCLK` included.  The difference from the vendor's build is the *flow* — the
+  same RTL through both flows gives colour on one and none on the other — and it
+  is located in the clock model: the vendor routes the 371.25 MHz TMDS bit clock
+  off the dedicated HCLK network, and the open flow's model leaves that network
+  input undriven, so the bit clock rides general fabric.  Fixing it is a device
+  database job, not a design change —
+  [`evidence/hdmi-flow-controlled.txt`](evidence/hdmi-flow-controlled.txt),
+  [`evidence/hclk-epsilon-undriven.txt`](evidence/hclk-epsilon-undriven.txt);
+  [`evidence/desktop-clock-routing.txt`](evidence/desktop-clock-routing.txt)
+  sections 11 onwards carry the earlier reading in that file
 - the core's **OLED and audio** paths, which are built but unexercised
 - the UART capture **drops bytes occasionally** (USB-serial), so it is evidence
   of content, not a byte-exact image; the `.fs` file is the exact artifact

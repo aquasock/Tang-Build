@@ -270,6 +270,8 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | Why does the Gowin IDE version matter when building a database? | TOOL | TOOL-022 |
 | Why does nextpnr abort inside Python before doing any work? | TOOL | TOOL-023 |
 | What is a measured clock frequency on this bench worth? | TOOL | TOOL-025 |
+| How is the clock model's hub fed, and why is a design's fast clock left on fabric? | TOOL | TOOL-029 |
+| Can a capture device be trusted to say whether the source sent a picture? | TOOL | TOOL-030 |
 | What licence is this project under going forward? | PROV | PROV-006, PROV-005 |
 
 ---
@@ -443,6 +445,8 @@ PROT-010: "a core's identity over the link is a family constant -- core id 0x54 
 BRD-009: "with the desktop core loaded the FPGA main clock measures 21.5020-21.5053 MHz and its pixel clock 74.2496-74.2501 MHz against the board 50 MHz oscillator (itself measuring 50.0036 MHz), steady over four power cycles; the main clock is its PLL 2000 MHz VCO over 93, not the 21.492 MHz its constraint names"
 DEV-009: "the 138C PLL's pump and loop-filter constants are measured over Fpfd 19-50 MHz and FVCO 650-1300 MHz, and a configuration outside that VCO band is refused by the packer"
 PROV-006: "the licence direction set on 2026-10-08 is GPL-3 going forward, with the MIT grants already published left standing"
+TOOL-029: "the clock model's hub input HCLK_MUX_EPSILON30 is hand-written in chipdb.py as a source and never a destination, so the divider's network feed is undriven and nextpnr takes the fabric entry L2HCLK for the 371.25 MHz TMDS bit clock; admitting the ~1,400 table-38 pairs at tiles (54,88) and (54,93) cannot help because those cells are not keys in hclk_pips, and hclk_pips and clock_pips share only the name VCC"
+TOOL-030: "an HDMI capture card with nothing driving it still emits frames -- a flat field at luma 16 and its own 'No Video' overlay, both monochrome at chroma 128 -- so chroma, not a luma signature, is what separates a real picture from the card's own output"
 ```
 
 ---
@@ -2686,6 +2690,33 @@ PROV-006: "the licence direction set on 2026-10-08 is GPL-3 going forward, with 
     - "TinyTang fpga/desktop/desktop.sdc: the 21.49 MHz main-clock and 74.25 MHz pixel constraints"
     - "nestang src/pll/gowin_pll_nes.v and the desktop core's PLL parameters: the divider selection that makes the VCO 2000 MHz divided by 93"
   verification: "Measured on this board 2026-10-10 over four power cycles, with the raw counts in this repository's evidence/clock-monitor.txt and the same figures in core-log entries 58 and 60."
+
+- record_id: TOOL-029
+  kind: TOOLCHAIN
+  topic_id: TOOL
+  title: "The clock model's hub input is a hand-written wire no code drives, so a design's fast clock is left with the fabric entry"
+  status: VERIFIED
+  verified_date: 2026-10-10
+  statement: "In this fork's apycula/chipdb.py, a block the code comments as the GW5A default PIPs -- `# default PIPs - The tables for the GW5A series do not include # descriptions of the default PIPs. So we add them manually by placing # them in cell (0, 0) -- this works because the default PIP has no fuse.` -- writes `HCLK_MUX_EPSILON<i>0`, `<i>2`, `<i>4` and `<i>6` only as the *source* argument of `mk_hclk_pip`, never as a destination, so `HCLK_MUX_EPSILON30` has no driver by construction and no vendor row is being dropped; the same block writes `HCLK_MUX_GAMMA<i>0 -> HCLK_HUB<i>0` and `HCLK_MUX_GAMMA<i>2 -> HCLK_HUB<i>1` as the default hub connection, and `HCLK_MUX_GAMMA30` is the divider's network input. The model's two clock graphs share exactly one wire name and it is `VCC`: `hclk_pips` carries 876 names and `clock_pips` 531, with 875 and 530 of them exclusive, because they are drawn from different name tables."
+  consequence: "The divider's network input is fed from a wire nothing drives, so the model offers no clock-plane path to it and nextpnr falls back to the fabric entry `L2HCLK` for this project's 371.25 MHz TMDS bit clock -- the located cause of the HDMI gap, consistent with `hclk5` failing dedicated routing at all four serialiser sinks (TOOL-028). It cannot be repaired by admission, because the default PIPs are absent from the vendor's tables by the code's own account, nor by invention, which `.ai/core.md` forbids, so the driver has to be measured from the vendor's own bitstream. The join between the HCLK plane and the clock network is a node statement, `gw5_make_hclk_to_clk_nodes` from the measured `_gw5a_hclk_to_clk` map, so joining the two graphs by adding names to either is aimed at the wrong mechanism."
+  sources:
+    - "apicula (this fork) apycula/chipdb.py lines 1572-1630: the default-PIP block, its comment, the Epsilon defaults and the GAMMA-to-HUB lines (local checkout /run/media/vash/GIT/apicula-mathieufro, revision 4281068)"
+    - "apicula (this fork) apycula/chipdb.py `fse_clock_pips_138`, and nextpnr-himbaechel himbaechel/uarch/gowin/gowin_arch_gen.py: `clock_pips` read into the routing graph beside `hclk_pips`"
+    - "this repository, evidence/hclk-epsilon-undriven.txt, evidence/hclk-table38-admission.txt and tools/chipdb-hclk-gaps.py"
+  verification: "Read first-hand from the fork's source on 2026-10-10: every use of EPSILON in the package is one of those six source arguments inside that block, and it is a destination nowhere. Measured the same day: nextpnr takes the fabric entry for the bit clock, and the bridge-cell experiment left the spanning count unchanged, which core-log entries 64, 65 and 66 carry."
+
+- record_id: TOOL-030
+  kind: TOOLCHAIN
+  topic_id: TOOL
+  title: "An HDMI capture card with no signal still emits frames, and chroma is what separates a picture from them"
+  status: INFERRED
+  verified_date: 2026-10-10
+  statement: "The bench's USB3 HDMI capture card presents frames to its host whether or not anything drives its input: with nothing there it emits a flat field at luma 16 and its own `No Video` overlay as bright text on a background of luma 0, and both are monochrome, with chroma pinned at 128 in every pixel. A real picture differs in chroma: the two known-good captures on this bench measured 22 and 24 distinct chroma values in their colour frames, while every other frame in all three captures was monochrome."
+  consequence: "Frames arriving at a capture device is not evidence that the source sent anything, so a frame's kind has to be established before anything is concluded from it, and chroma is what establishes it -- a luma signature alone is not enough, because a real dark-background picture shares the overlay's signature of a dark background with bright pixels, and this project's own tools/hdmi-frames.py mislabelled a working, colourful capture as the card's logo on that basis, which cost two withdrawn readings. The same card's audio input is usable for the source's audio and was proven good end to end at 48 kHz stereo."
+  sources:
+    - "the device's own USB descriptors: 345f:2133 MACROSILICON Guermok USB3 Video (lsusb), and ALSA card `Guermok USB3 Video` via USB-Audio at super speed"
+    - "this repository, tools/hdmi-frames.py, which now decides a frame's kind by chroma, and evidence/hdmi-instrument-control.txt, evidence/hdmi-flow-controlled.txt and evidence/hdmi-chroma-classifier.txt"
+  verification: "Inferred from consistent observation rather than a vendor document, on 2026-10-10: three captures of 1280x720 YUYV taken through this card -- Phosphor, the Gowin-built desktop core and the open-built desktop core -- separate into colour and monochrome by their chroma with the corrected tool, and core-log entries 68 and 70 carry the control and the withdrawals it rules out."
 
 ```
 
