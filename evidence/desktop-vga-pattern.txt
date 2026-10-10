@@ -1,0 +1,117 @@
+# VGA vertical stripes: identical-routing changing-pattern control
+
+Cycle date: 2026-10-09, America/Phoenix.
+Baseline cycle: evidence/desktop-vga-stripes.txt, core-log entry 42.
+
+## Controlled board result
+
+The previous control produced clean constant white, while restoring the
+original desktop brought back the vertical dark lines on the Dell E772c.
+This cycle tested changing RGB data: alternating eight-output-pixel green and
+red bands, with no intended black pixels inside the visible picture.
+
+The user power-cycled before the diagnostic load and reports:
+
+  "Bands are clean; no black lines"
+
+After another user-confirmed power cycle, the exact baseline was restored and
+osd desk on applied. The user reports:
+
+  "Desktop is back; the lines returned"
+
+The existing downstream path can therefore display these particular RGB
+transitions without the reported defect. This narrows the investigation to
+the bypassed compositor dependencies or shared RGB clear, but does not prove
+a specific cause. Other colours, transition rates, or data-dependent output
+effects have not been ruled out. This is a diagnostic result, not a fix.
+
+## Artifact identity and exact isolation
+
+Baseline binary:
+
+  bytes   4492268
+  SHA256  7b95d942925497e9a63267ae5d979dca3eb5e4367bc08c68a5a64bbdcb0f077b
+  card    /cores/console138k/desktop-vga-baseline.bin
+
+Pattern binary:
+
+  bytes   4492268
+  SHA256  92fda658a2adafa1490fdd237196db382c896653474e6a63871325b7f773c386
+  card    /cores/console138k/desktop-vga-bands8.bin
+
+tools/make-vga-pattern.py starts from the preserved exact baseline routed JSON:
+
+  build/vga-diagnostic/baseline/pnr.json
+  SHA256 4fda33387a5a21b012b9db685f35af72c9fdd31a3de7fb5948164007ecbe44b5
+
+It overrides seventeen LUT INIT values: the final glyph selector becomes a
+passthrough of an already-routed registered raster-coordinate bit, fifteen
+foreground/background colour muxes select fixed green/red values regardless
+of their cell-colour inputs, and the shared RGB synchronous clear becomes
+zero. Cell memory, font lookup and cell colours no longer control RGB data.
+The existing colour pipeline and RGB registers, clocks, sync, VGA blanking,
+socket declaration/flip selection, placement and every routed wire remain.
+
+The tool identifies coordinate significance by evaluating the original glyph
+selection against one-hot font data. The selected register is
+u_hdmi.u_wide.cx2_DFF_Q, already routed to I0 of
+u_hdmi.u_wide.cx2_LUT4_I3_F_MUX2_LUT5_I1_O_LUT4_I3 at X149Y66/LUT7.
+The original selector INIT is 1111111001010100; the override is
+1010101010101010. The tool permits only eight-pixel bands for this routing;
+that is a diagnostic implementation limit, not a video standard limit.
+
+The final deep comparison restores all seventeen old INITs in memory and
+requires equality with the original JSON. The manifest records every changed
+cell/BEL/INIT and both JSON digests. Pattern routed JSON:
+
+  build/vga-pattern/bands8.json
+  SHA256 23b6aa7ec81893f7607c4b9407cd5d82d20df45b94a985d49b582376c37e5a4e
+
+## Validation and deployment
+
+Regeneration matched the staged JSON exactly. All sixteen selector truth-table
+addresses pass the chosen coordinate bit independently of the other inputs.
+For all 1,280 horizontal positions, every combination of the ignored colour
+inputs produced the expected green/red RGB values (00f800/f80000 after the
+five-bit-per-channel truncation), never black. A corrupted original selector
+and a coordinate register on a different clock were rejected. Python compile
+and whitespace checks passed.
+
+Packing completed successfully using the same GW5AST-138C device and fork as
+the baseline, followed by tools/fs-to-bin.py. No synthesis or rerouting was
+performed. Entry 42's corrected-clock structural timing report remains the
+comparison reference; this cycle does not claim an analog timing measurement.
+
+Upload reported the full byte count. After the user's fresh power cycle,
+tangload reported core loaded, status 00026230, and declared socket word
+0x0230. Three fpga/tangini pairs consistently reported core 84, ABI 1.1,
+and the expected VGA sockets. Raw output is preserved locally in
+build/vga-pattern/board-pattern.txt. The original desktop.bin and boot
+configuration were preserved; the diagnostic occupies a separate card path.
+The baseline restoration also completed with status 00026230 and three
+consistent core-ID/socket pairs. Its raw output is preserved locally in
+build/vga-pattern/board-restored.txt. The original desktop is running again.
+
+## Reproduction and next isolation
+
+From the repository root:
+
+  tools/make-vga-pattern.py build/vga-diagnostic/baseline/pnr.json \
+    build/vga-pattern/bands8.json --width 8 --first 00ff00 --second ff0000
+  PYTHONHOME=/home/vash/oss-cad-suite \
+    PYTHONPATH=/run/media/vash/GIT/apicula-mathieufro:/home/vash/tools/pydeps \
+    /home/vash/oss-cad-suite/py3bin/python3 -m apycula.gowin_pack \
+    -d GW5AST-138C -o build/vga-pattern/bands8.fs build/vga-pattern/bands8.json
+  python3 tools/fs-to-bin.py build/vga-pattern/bands8.fs \
+    -o build/vga-pattern/bands8.bin
+
+Use the exact preserved routed netlist for reproduction of this image; a new
+route requires its own comparison and guards may refuse a changed structure.
+Do not commit generated diagnostic binaries or routed JSON.
+
+The next proposed discriminator is to disable only the shared RGB clear in
+the original desktop, retaining its data functions and exact routing. A
+clean result would implicate the clear or its alignment; persistent lines
+would leave the original pixel data path as the next investigation. Neither
+result alone establishes the final repair. Obtain approval for that next
+cycle and retain the fresh-power-cycle rule for each load.

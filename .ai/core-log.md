@@ -1316,3 +1316,34 @@ Separate RGB register data from its shared clear, or drive a known changing pixe
 - User Test: PASS
 
 ---
+
+## 43 COMMIT Unreleased 2026-10-09T19:44:44-07:00
+
+#### Coming From:
+
+Unreleased 179f7ba
+
+#### Purpose:
+
+Test known changing RGB data with the original desktop routing while bypassing compositor dependencies to narrow the VGA vertical-line defect.
+
+#### Outcome:
+
+The user's Dell E772c displays the eight-pixel green/red diagnostic bands cleanly, and restoring the exact original desktop brings the vertical lines back. `tools/make-vga-pattern.py` changes only seventeen LUT INIT values in the preserved baseline routed JSON: the final glyph selector passes an already-routed registered coordinate bit, fifteen colour muxes select fixed colours, and the shared RGB synchronous clear is disabled. The cell/font/colour dependencies are bypassed while the pipeline registers, clocks, VGA blanking, connections, BELs and routes remain intact, with exact deep comparison enforcing that boundary. Packing produced `92fda658a2adafa1490fdd237196db382c896653474e6a63871325b7f773c386`, 4,492,268 bytes, staged separately as `/cores/console138k/desktop-vga-bands8.bin`. Regeneration, exhaustive selector truth-table checks, colour-function checks across 1,280 horizontal positions and all ignored colour inputs, corrupted-selector and cross-clock refusals, Python compile and whitespace checks passed. The user power-cycled before both loads; each completed and returned three consistent core-ID/socket pairs at core 84, ABI 1.1 and word 0x0230. The baseline `7b95d942925497e9a63267ae5d979dca3eb5e4367bc08c68a5a64bbdcb0f077b` is running again with `osd desk on`, and the user confirms the desktop and original lines returned; the normal boot image is preserved. This extends entry 42 by showing that this downstream path can display these particular RGB transitions cleanly, leaving the bypassed data dependencies and shared clear as suspects without ruling out every data-dependent output effect or claiming a fix. `evidence/desktop-vga-pattern.txt` records the isolation, reproduction and limits. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed only this appended entry changed there and that `core.md` and settled history remain intact, and validated sequential numbering, the four-field header, six canonical sections, prose, allowed Status values and the 43-entry capacity. No FPGA RTL or new third-party source was introduced.
+
+#### Next Steps:
+
+Propose an identical-routing original-desktop control that disables only the shared RGB synchronous clear, retaining the original pixel data functions, to distinguish clear/alignment effects from the data path before selecting a repair. The changing-band and flat-white comparisons are complete and should not be repeated without new evidence. Preserve the baseline and require a fresh power cycle for each load; the missing HCLK interconnect, HDMI failure, uncommitted TinyTang socket-retry fix and deferred desktop patch consolidation remain open.
+
+#### Files Modified:
+
+- tools/make-vga-pattern.py
+- evidence/desktop-vga-pattern.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---
