@@ -1938,3 +1938,33 @@ The remaining gap is one defect and it is now bounded by a working control, so t
 - User Test: PASS
 
 ---
+
+## 63 COMMIT Unreleased 2026-10-10T11:25:48-07:00
+
+#### Coming From:
+
+Unreleased 84dd7a0
+
+#### Purpose:
+
+Record the cycle the user asked for between the profile and the HDMI work, in which the desktop app's About window was made to name the open-source toolchain the FPGA image is built with.
+
+#### Outcome:
+
+The cycle is complete and it changed nothing in this repository, which is why Files Modified is `None.` The change is in TinyTang: `ports/bl616/td_desktop_bl616.c` sets the port's one About line to `desktop:   yosys+nextpnr+apicula (open)`, committed there as `4f54cc8` and recorded in that repository's log as entry 74, which carries the detail. The engineering substance worth having here is the reason it needed no patch: the About app renders exactly one line supplied by the port -- `si->extra` in the sysinfo struct -- and the app's own height calculation already counts it, so naming the toolchain was a string change in this project's own port code, with no `third_party/patches/tinydesk/` entry, no edit to the TinyDesk submodule and no `THIRD_PARTY.md` obligation added. That hook was already carrying the shell version, and the user chose not to add a second line -- which would have needed an upstream patch, because the app's labels are single-line and would truncate a newline rather than wrap it -- so the shell version now lives only on the console, where `platform` prints it. The wording took three iterations at the user's direction, from `desktop.bin:` to `desktop:` to a label padded to the 11-column convention of the rows above, each iteration answering what the previous one looked like on screen, and the firmware was built and flashed three times ending at `4df6b6fb`. The user reports the line looks right and that the cycle passes. One cost is recorded rather than smoothed over: the first flash attempt failed with `could not open port /dev/ttyACM0` because the board was not connected to this workstation, not because anything was wrong with the tool or the image, and it was confirmed absent rather than assumed -- neither of the board's two USB identities, `ffff:5454` for the two-wire console and `0403:6010` for the one-wire loader, was present. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 63 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+The next cycle is the one the user named before this one interrupted it: make the open build drive HDMI, which is the whole of the remaining gap between this project and its purpose. Step 1 is cheap and read-only and still not run -- find in the vendor's `.fse` the pairs that drive `HCLK_UNK561`, `HCLK_UNK563` and `HCLK_UNK585` at tile (81,181) and classify each source tile, because the earlier experiment established that adding pips inside tiles the model already has changes no route and the failure needs a wire that carries a clock between tiles; if the vendor's feed is cross-tile the lead can work, and if it is intra-tile the lead dies the way the previous two did and the cycle should stop there rather than iterate. That work modifies the apicula fork, which is still clean at `4281068`, and needs the user's explicit approval before anything is written there. The acceptance is unchanged: `Failed to route net 'hclk5'` falling to zero, `clk` falling from 1199, and the display confirmed by the user rather than by the model. Also still open: the seed-19 discriminator in `build/clock-monitor/desktop.aa6b0f9d733b.bin`, the chipdb lead in `evidence/clock-chipdb-ground-truth.txt`, the uncommitted TinyTang socket-retry fix, and the TinyTang active-log numbering non-conformance.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: PASS
+
+---
