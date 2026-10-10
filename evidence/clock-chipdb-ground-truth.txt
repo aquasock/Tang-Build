@@ -1,0 +1,116 @@
+# The clock model is missing ~1,400 pips at the central bridge — read from the vendor's own data
+
+Cycle 2026-10-10, second session. Base: Tang-Build `66e1a4d`. **Nothing was
+modified.** This file is the whole point of the cycle: it turns "the chipdb's
+clock network is incomplete" from a symptom into a number and a place.
+
+The work started from the seven-probe result in
+`evidence/vga-lines-knife-edge.txt`, which closed every local theory for the VGA
+vertical lines and left one root: `clk` rides general fabric with 4.389 ns of
+skew because the clock network is not modelled. The question this cycle asked
+was therefore the right one — *what exactly is missing?* — and it was answered
+from source data rather than guessed at.
+
+## The ground truth, and how to read it
+
+Three sources, all local, no hardware and no reconstruction:
+
+- **the vendor's own device data** — `$GOWINHOME/IDE/share/device/GW5AST-138C/
+  GW5AST-138C.fse`, read with `apycula.fse_parser.read_fse(f, "GW5AST-138C")`;
+  this is what the chipdb builder itself parses;
+- **the vendor's own bitstream** —
+  `TinyTang/build/desktop/source/impl/pnr/desktop.fs` (`c17cfd90...`), the Gowin
+  flow's build for this exact design;
+- **the model** — `apicula-mathieufro/apycula/GW5AST-138C.msgpack.xz`
+  (`57a1c2a5...`), read with `chipdb.load_chipdb`.
+
+Table numbering, from `chipdb._wire_tables`: `CLOCK_MUX` = **38**, `HCLK` = 48,
+`CLOCK_MUX_TOP` = 90, `CLOCK_MUX_BOTTOM` = 91. The central-bridge tile types are
+`bridge_tile_types_138 = {80, 81, 82, 83, 84, 85}`.
+
+Two API details that cost time and are worth inheriting:
+`wirenames.clknames` is **None until `wirenames.select_wires(device)` is
+called**, so a standalone probe must call it before naming ids; and
+`gowin_unpack` emits **Verilog, not JSON** (its output is a netlist with
+`module top(...)`), so `.json` filenames for it are misleading.
+
+## Finding 1 — the five inter-HCLK bridge cells are dropped, four pips at a time
+
+Every HCLK cell carries table 48. The blocks carry 153 intra-HCLK entries plus
+6-12 inter-HCLK ones; the five **bridge** cells carry **exactly 8 entries each and
+all 8 are inter-HCLK** (`intra = 0`):
+
+```
+(63,0)   src 315..322 -> dest 323..326
+(63,181) src 187..194 -> dest 195..198
+(108,0)  src 283..290 -> dest 291..294
+(108,118) src 251..258 -> dest 259..262
+(108,181) src 219..226 -> dest 227..230
+```
+
+Destinations come in **bands of four at a stride of sixteen** (195-198, 211-214,
+227-230, ...), which is the structure the `gw5_ihclk_wire_num` derivation assumes.
+
+`gw5_make_hclk_pips` walks only cells where `gw5_hclk_idx(...) >= 0`, and that
+returns `-1` for all five bridges — so **40 inter-HCLK pips that the vendor's own
+data carries are never built.** That is a real gap, but it is *not* the one that
+matters: those entries are intra-cell muxes, the builder names them
+`hclknames[srcid + 5*hclk_off]` (unique per cell), and cycle 48 measured that
+admitting the bridges changes no route. Recorded so nobody re-tries it expecting
+a different answer.
+
+## Finding 2 — the model is short ~1,400 pips at the central bridge
+
+The two central-bridge tiles carry table 38 at scale, and the model holds far
+fewer pips than the data describes. Comparing **sets of distinct named
+`(dest, src)` pairs**, so a dict collapsing duplicates cannot explain it:
+
+| tile | ttyp | fse table-38 pairs | model `clock_pips` | in the data, missing from the model |
+|---|---|---|---|---|
+| `(54,88)` | 80 | **1672** | 943 | **848** |
+| `(54,93)` | 85 | **1259** | 823 | **579** |
+
+The reverse direction is small and correct: 119 and 143 pairs are in the model
+and not in table 38, which are the `CLOCK_MUX_TOP`/`CLOCK_MUX_BOTTOM` additions
+made by `fse_clock_pips_138`. So the model is *adding* the right things and
+*losing* about half of what table 38 holds — at exactly the tiles the fork's own
+comment identifies as where the spine path runs
+(`gw5_make_hclk_to_clk_nodes`: "the clock wire is already a node of the same
+name: `fse_create_5a138_clocks` creates it in the bridge cells (54,88)/(54,93)
+where the table-38 pip muxes it onto a SPINE").
+
+## The three candidates for the loss, all cheap to distinguish
+
+1. **Tile-shape dedup.** The arch generator logs "Deduplicating tile shapes ...
+   N unique tile routing shapes". If the bridge's shape merges with a
+   less-populated one, pips disappear wholesale — a build bug, not missing data.
+2. **A second writer.** `tile.clock_pips` is assigned from
+   `fse_pips(..., _wire_tables['CLOCK_MUX'], wnames.clknames)` (chipdb.py ~5691),
+   and `fse_clock_pips_138` builds its own `pips` dict. If anything *replaces*
+   rather than merges, table 38's contribution is gone.
+3. **A filter in the build path** not yet spotted — `fse_pips` itself has one
+   worth noting: an entry with `srcid < 0` is consumed and then **never
+   inserted** (the `if` branch sets `fuses` and negates, but only the `else`
+   adds the pip). Negative `srcid` means a default, fuse-less connection, which
+   `fse_clock_pips_138` handles correctly by negating and using it. On these two
+   tiles there are **zero** negative ids, so it is not the cause *here* — but it
+   is a real asymmetry between the two functions and should be checked wherever
+   pips go missing.
+
+## Next, concretely
+
+Trace the `clock_pips` build path for `(54,88)` in `chipdb_builder`/`chipdb` and
+find which of the three candidates drops the 848 pairs. The measurement to
+repeat is the pair-set comparison above; the acceptance measure for the eventual
+fix is unchanged and already built — the count of `Failed to route net 'clk'`
+falling from 943, and `tools/clock-route-inventory.py` reporting clocks on the
+dedicated network.
+
+## Limits
+
+- Only two tiles were compared in detail. The loss is quantified *there*; whether
+  it is general across bridge tiles is untested.
+- The comparison is by *name*, using the fork's own `clknames` table. If that
+  table maps two ids to one name the comparison would over-count the fse side,
+  though the earlier probe found no unnamed wires and no negative ids here.
+- Nothing was changed in either repository; both are at the revisions above.

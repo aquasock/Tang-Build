@@ -1726,3 +1726,33 @@ Model the HCLK interconnect in apicula's chipdb from the vendor's `.dat` and `.f
 - User Test: PASS
 
 ---
+
+## 56 COMMIT Unreleased 2026-10-10T08:24:24-07:00
+
+#### Coming From:
+
+Unreleased 66e1a4d
+
+#### Purpose:
+
+Turn the chipdb's incomplete clock network from a symptom into a measured quantity and a location, by reading the vendor's own device data rather than guessing at table entries.
+
+#### Outcome:
+
+The question this cycle asked was what the clock model is actually missing, and it is now answered from source rather than inferred. Three local sources were used: the vendor's device data at `$GOWINHOME/IDE/share/device/GW5AST-138C/GW5AST-138C.fse`, read with the same `apycula.fse_parser` the chipdb builder uses; the vendor's own bitstream at `TinyTang/build/desktop/source/impl/pnr/desktop.fs`, sha256 `c17cfd90...`; and the model at `apicula-mathieufro/apycula/GW5AST-138C.msgpack.xz`, sha256 `57a1c2a5...`. Two findings came out, one small and one central. The small one: every HCLK cell carries table 48, and the five inter-HCLK bridge cells `(63,0) (63,181) (108,0) (108,118) (108,181)` carry exactly eight entries each, all eight inter-HCLK, with destinations in bands of four at a stride of sixteen; `gw5_make_hclk_pips` walks only cells whose `gw5_hclk_idx` is non-negative and that returns -1 for all five, so forty inter-HCLK pips the vendor's data carries are never built -- but cycle 48 already measured that admitting them changes no route, because they are intra-cell muxes named uniquely per cell, and it is recorded here so the attempt is not repeated expecting a different answer. The central finding: at the two tiles the fork's own comment identifies as where the spine path runs, `(54,88)` with ttyp 80 and `(54,93)` with ttyp 85, the fse carries 1672 and 1259 distinct named `(dest, src)` pairs in table 38, and the model's `clock_pips` holds only 943 and 823 -- so 848 and 579 pairs present in the vendor's own data are absent from the model, roughly 1400 pips at the clock distribution's hub. The comparison is between sets of distinct named pairs, so a dict collapsing duplicates cannot account for it, and the reverse direction is small and correct, 119 and 143 pairs being the `CLOCK_MUX_TOP` and `CLOCK_MUX_BOTTOM` additions that `fse_clock_pips_138` is supposed to make. Three candidate causes are named and all are cheap to distinguish: tile-shape deduplication, which the arch generator logs and which would merge the bridge's shape with a less-populated one; a second writer replacing rather than merging `clock_pips`, since `fse_clock_pips_138` builds its own dict alongside the assignment at chipdb.py around line 5691; and a filter in the build path, for which one real asymmetry is recorded -- `fse_pips` consumes an entry with a negative `srcid` and never inserts it, while `fse_clock_pips_138` negates and uses the same entry, and although there are zero negative ids on these two tiles so it is not the cause here, it is a genuine divergence worth checking wherever pips go missing. Two API details that cost time are written down for the next agent: `wirenames.clknames` is None until `wirenames.select_wires(device)` is called, and `gowin_unpack` emits Verilog rather than JSON despite the output being named `.json` in earlier cycles. Nothing was modified in either repository: the apicula fork remains at `4281068` with its chipdb at `57a1c2a5...`, and every probe was read-only. Because this is a diagnostic cycle with no build and no hardware, all three statuses are not applicable. `evidence/clock-chipdb-ground-truth.txt` carries the table numbering, the two findings, the three candidates and the limits, including that only two tiles were compared in detail and that the comparison is by name using the fork's own `clknames`. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 56 of the active log and a count within the 100-entry limit.
+
+#### Next Steps:
+
+Trace the `clock_pips` build path for tile `(54,88)` through `chipdb_builder` and `chipdb` and establish which of the three candidates -- tile-shape deduplication, a second writer replacing rather than merging, or a filter -- drops the 848 pairs, repeating the pair-set comparison above as the measurement; then fix exactly that and re-measure with `Failed to route net 'clk'` falling from 943 and `tools/clock-route-inventory.py` reporting clocks on the dedicated network, which remain the acceptance measures. Do not re-try admitting the five inter-HCLK bridge cells, and do not repeat the mode, PLL-site, output-phase, OLED, spanning-pip, all-dedicated, BUFG-insertion, contention or placement-sweep probes. The VGA vertical lines are a symptom of this root cause rather than a separate defect; the board is on the bootable baseline with the perfect reference on the card as `desktop-oldgood-test.bin`; and the HDMI HCLK failure, the uncommitted TinyTang socket-retry fix and the deferred desktop patch consolidation remain open.
+
+#### Files Modified:
+
+- evidence/clock-chipdb-ground-truth.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---
