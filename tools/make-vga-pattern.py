@@ -8,6 +8,10 @@ VGA blanking, socket selection and all routed wires remain intact. As in the
 solid-white control, the RGB registers' shared synchronous clear is disabled.
 
     tools/make-vga-pattern.py routed.json bands.json --width 8
+    tools/make-vga-pattern.py routed.json fine.json --width 2 --first 7f7f7f --second 808080
+
+Two-pixel bands pass the coordinate through one additional dedicated LUT
+already in the selector cone. Only its INIT changes; shared paths are refused.
 
 The image alternates green and red bands of the specified output-pixel width;
 no black pixels are intended inside the visible picture. This diagnostic does
@@ -134,8 +138,27 @@ def override(doc, width, first, second):
     coordinate = coord_bits[mask.bit_length() - 1]
     selector_name, selector_lut = driver(selector, "F", "LUT4")
     pins = [i for i in range(4) if selector_lut["connections"].get(f"I{i}") == [coordinate]]
-    if len(pins) != 1:
-        raise ValueError("requested coordinate is not already routed to the final selector LUT")
+    if len(pins) == 1:
+        selector_chain = [(selector_name, pins[0])]
+    elif not pins:
+        # Finer coordinates already reach a dedicated LUT immediately before
+        # the final selector. Pass the bit through those two existing LUTs.
+        candidates = []
+        for final_pin in range(4):
+            bit = selector_lut["connections"][f"I{final_pin}"][0]
+            source_name, source_pin = drivers[bit]
+            source = cells[source_name]
+            if source_pin != "F" or source["type"] != "LUT4":
+                continue
+            source_pins = [i for i in range(4)
+                           if source["connections"].get(f"I{i}") == [coordinate]]
+            if len(source_pins) == 1 and users[bit] == {(selector_name, f"I{final_pin}")}:
+                candidates.append([(source_name, source_pins[0]), (selector_name, final_pin)])
+        if not candidates:
+            raise ValueError("requested coordinate has no dedicated existing LUT path to selector")
+        selector_chain = candidates[0]
+    else:
+        raise ValueError("coordinate reaches multiple final selector pins")
 
     changes = []
 
@@ -149,7 +172,8 @@ def override(doc, width, first, second):
         changes.append({"cell": name, "bel": cell["attributes"]["NEXTPNR_BEL"],
                         "old_init": old, "new_init": cell["parameters"]["INIT"]})
 
-    lut_init(selector_name, sum(((address >> pins[0]) & 1) << address for address in range(16)))
+    for name, pin in selector_chain:
+        lut_init(name, sum(((address >> pin) & 1) << address for address in range(16)))
     for index, name in muxes:
         low, high = (first >> index) & 1, (second >> index) & 1
         lut_init(name, sum((high if address & 4 else low) << address for address in range(8)))
@@ -163,10 +187,14 @@ def override(doc, width, first, second):
     restored_cells = next(iter(restored["modules"].values()))["cells"]
     for change in changes:
         restored_cells[change["cell"]]["parameters"]["INIT"] = change["old_init"]
-    if restored != doc or len(changes) != 17 or len({c["cell"] for c in changes}) != 17:
-        raise ValueError("more than seventeen intended LUT INIT values changed")
+    expected = 16 + len(selector_chain)
+    if restored != doc or len(changes) != expected or len({c["cell"] for c in changes}) != expected:
+        raise ValueError("more than the intended LUT INIT values changed")
     return result, changes, {"coordinate_register": coord_names[mask.bit_length() - 1],
-                             "selector_lut": selector_name, "selector_pin": f"I{pins[0]}",
+                             "selector_lut": selector_name,
+                             "selector_pin": f"I{selector_chain[-1][1]}",
+                             "selector_path": [{"cell": name, "pin": f"I{pin}"}
+                                               for name, pin in selector_chain],
                              "original_selector_font_positions": positions}
 
 
@@ -174,8 +202,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--width", type=int, choices=(8,), default=8,
-                        help="eight output pixels; other widths need a different routed selector")
+    parser.add_argument("--width", type=int, choices=(2, 8), default=8,
+                        help="output pixels per band; requires an existing dedicated selector path")
     parser.add_argument("--first", default="00ff00", help="first RGB colour, six hex digits")
     parser.add_argument("--second", default="ff0000", help="second RGB colour, six hex digits")
     args = parser.parse_args()
@@ -195,7 +223,7 @@ def main():
                     "second_rgb": args.second.lower(), "changes": changes,
                     "placement_and_routing_unchanged": True, **selection}
         args.output.with_suffix(".manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-        print(f"{args.output}: {args.width}-pixel colour bands; 17 INIT overrides, routes unchanged")
+        print(f"{args.output}: {args.width}-pixel colour bands; {len(changes)} INIT overrides, routes unchanged")
     except (ValueError, KeyError, OSError) as exc:
         parser.exit(1, f"refusing diagnostic: {exc}\n")
 

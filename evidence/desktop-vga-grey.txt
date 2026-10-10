@@ -1,0 +1,139 @@
+# VGA vertical stripes: intermediate grey and two-pixel transitions
+
+Cycle date: 2026-10-09, America/Phoenix.
+Previous controls: desktop-vga-stripes.txt, desktop-vga-pattern.txt,
+desktop-vga-clear.txt.
+
+## Controlled observations
+
+The user requested a rethink after the original desktop repeatedly showed
+vertical black lines while white and full-brightness red/green controls were
+clean. Those controls had not independently tested intermediate colour codes
+or transitions at the desktop's two-output-pixel spacing. The approved plan
+was to test constant grey, then fine transitions if grey was clean.
+
+A neutral palette grey was selected; the current theme was not established,
+so this cycle does not claim a match to the active window background. The
+input colour 7f7f7f is palette index 8 in the running firmware source. Its
+five-bit-per-channel truncation is 787878, and VGA uses the upper four bits,
+giving code 0111 on each channel. The user reports:
+
+  "Grey is clean; no vertical lines"
+
+The next control alternates 7f7f7f and 808080 every two output pixels: VGA codes
+0111 and 1000 on each channel. The upper bit switches opposite to the lower
+three, rather than all channel bits switching together as in the full-level
+controls. Neither code is black. The user first reported a solid grey screen,
+then explicitly confirmed:
+
+  "Grey is clean; original black lines are absent"
+
+The adjacent grey bands were not resolved visually. The result is absence of
+the original black defect, not a measured waveform or visual proof of each
+two-pixel transition. The generated logic independently evaluates to the
+specified pattern. These results show that the selected intermediate grey
+and this fine-pattern derivative can appear clean on the existing output
+path. They do not prove every desktop colour/transition works or identify
+the final fault.
+
+## Artifact identities and boundaries
+
+All images are derived from the exact preserved baseline routed JSON:
+
+  build/vga-diagnostic/baseline/pnr.json
+  SHA256 4fda33387a5a21b012b9db685f35af72c9fdd31a3de7fb5948164007ecbe44b5
+
+Constant grey:
+
+  tool   tools/make-vga-solid.py --rgb 7f7f7f
+  JSON   build/vga-grey/mid.json
+  SHA256 1eefbcab6e59cab6b23d926cbb471af7e5fb6b6692f37ef4ec1e0c33c4300a9b
+  binary build/vga-grey/mid.bin
+  bytes  4492268
+  SHA256 c77c5a3934efd60a55b45f9814a12e9ac84f75255c881227bd3174a989e9fc74
+  card   /cores/console138k/desktop-vga-grey.bin
+
+As in the white control, only sixteen INIT properties change: fifteen RGB
+register input LUTs become constants and their shared clear is disabled.
+Every input-LUT truth-table address yields the same intended bit. Clear-only
+testing in entry 44 had already left the original lines unchanged.
+
+Two-pixel grey pattern:
+
+  tool   tools/make-vga-pattern.py --width 2 --first 7f7f7f --second 808080
+  JSON   build/vga-grey/bands2.json
+  SHA256 6232892b1603edaaa1d6777d1974cb88efb90aab6dcdba5e0881477bf9c730f1
+  binary build/vga-grey/bands2.bin
+  bytes  4492268
+  SHA256 f32c76ab19a9d12853c11c1188488aed3f174031a582db82d768a9110efb22c0
+  card   /cores/console138k/desktop-vga-grey-bands2.bin
+
+The pattern helper now supports two-pixel bands by passing the registered
+coordinate u_hdmi.u_wide.cx2_DFF_Q_2 through two existing dedicated LUTs:
+
+  u_hdmi.u_wide.cx2_LUT4_I3_F_MUX2_LUT5_I1_O_LUT4_F
+    X149Y62/LUT2, I2 passthrough, INIT 1100101000000000 -> 1111000011110000
+  u_hdmi.u_wide.cx2_LUT4_I3_F_MUX2_LUT5_I1_O_LUT4_I3
+    X149Y66/LUT7, I1 passthrough, INIT 1111111001010100 -> 1100110011001100
+
+Together with the fifteen fixed-colour muxes and shared clear, this makes
+eighteen INIT changes. Both helpers restore old INITs in memory and require
+equality with the complete input JSON, preserving all connections, BELs and
+routes. The two-pixel path refuses intermediate LUTs with unrelated users.
+The existing eight-pixel green/red JSON regenerated identically after the
+helper extension. Both selector truth tables passed exhaustively; the actual
+fifteen colour LUTs yielded 787878/808080 across all 1,280 positions and every
+combination of ignored fg/bg bits, with VGA codes 7/8 and no intended black.
+The unrelated-intermediate-path refusal and Python compilation passed.
+
+## Pixel doubling review and board verification
+
+The reconstructed source textdisp_wide.sv presents a 640x360 layer at 2x on
+the 1280x720 raster. It selects the font row with cy1[3:1] and column with
+cx2[3:1], repeating each source pixel horizontally and vertically. It does
+not intentionally insert a black column between copies. desktop_pmod.sv
+blanks outside the active rectangle, not on alternate active columns.
+In the baseline routed netlist, all fifteen RGB register CE inputs share net
+49191, driven by $PACKER_VCC_DRV (GOWIN_VCC); there is no alternating-pixel
+enable at those registers. This source/structure review does not establish
+that the entire mapped font/colour path behaves correctly on hardware.
+
+Both uploads confirmed the complete byte count. The user power-cycled before
+each load. Both loads reported core loaded, status 00026230 and socket word
+0x0230, with three consistent fpga/tangini pairs each reporting core 84,
+ABI 1.1 and expected VGA sockets. Serial output is retained locally in
+build/vga-grey/board-{upload,grey,upload-bands2,bands2}.txt. The normal
+desktop.bin and boot configuration were preserved.
+
+After another user-confirmed power cycle, the exact baseline binary
+7b95d942925497e9a63267ae5d979dca3eb5e4367bc08c68a5a64bbdcb0f077b
+loaded successfully, with status 00026230, three consistent core-ID/socket
+pairs and osd desk on applied. The original desktop/console image is running
+again. Restoration output is in build/vga-grey/board-restored.txt; no new
+visual acceptance of the unchanged baseline was requested.
+
+## Reproduction
+
+From the repository root:
+
+  tools/make-vga-solid.py build/vga-diagnostic/baseline/pnr.json \
+    build/vga-grey/mid.json --rgb 7f7f7f
+  tools/make-vga-pattern.py build/vga-diagnostic/baseline/pnr.json \
+    build/vga-grey/bands2.json --width 2 --first 7f7f7f --second 808080
+
+For each generated JSON, pack using the baseline's GW5AST-138C fork/environment
+and convert to binary, substituting mid or bands2 for IMAGE:
+
+  PYTHONHOME=/home/vash/oss-cad-suite \
+    PYTHONPATH=/run/media/vash/GIT/apicula-mathieufro:/home/vash/tools/pydeps \
+    /home/vash/oss-cad-suite/py3bin/python3 -m apycula.gowin_pack \
+    -d GW5AST-138C -o build/vga-grey/IMAGE.fs build/vga-grey/IMAGE.json
+  python3 tools/fs-to-bin.py build/vga-grey/IMAGE.fs \
+    -o build/vga-grey/IMAGE.bin
+
+No synthesis or rerouting was performed. Generated binaries and routed JSON
+remain uncommitted. The next investigation should compare actual mapped
+font/colour selection and coordinate alignment with the expected repeated
+pixel pairs before choosing another hardware change. The ideal-source video
+regression already passed in entry 42; repeating it alone would not validate
+the mapped/packed implementation.

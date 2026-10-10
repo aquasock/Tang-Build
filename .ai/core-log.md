@@ -1378,3 +1378,34 @@ Propose a control that forces only glyph selection to background while retaining
 - User Test: PASS
 
 ---
+
+## 45 COMMIT Unreleased 2026-10-09T20:09:43-07:00
+
+#### Coming From:
+
+Unreleased 2cdd365
+
+#### Purpose:
+
+Test an intermediate constant grey and, if clean, two-pixel grey transitions with identical routing to check differences the full-brightness VGA controls had not exercised.
+
+#### Outcome:
+
+Both grey controls lack the original black vertical lines on the user's Dell E772c. The existing solid-image helper generated neutral `7f7f7f`, truncated to registered RGB `787878` and VGA channel code `0111`; the active theme was not established, so the shade is not claimed to match the current window background. The user reports that this constant grey is clean. The pattern helper now supports two-pixel bands through one additional dedicated LUT already in the glyph-selector cone, refuses intermediate paths with unrelated users, and preserves the original eight-pixel image exactly. Alternating `7f7f7f` and `808080` produces VGA codes `0111` and `1000`, exercising opposite transitions of the upper bit and lower three. The user saw a solid-looking grey screen and explicitly confirmed that the original black lines were absent; the adjacent grey bands were not resolved visually, so this is not a measured waveform or visual verification of each transition. Exact deep comparisons enforce sixteen INIT-only changes for constant grey and eighteen for the fine pattern, with all connections, BELs and routes retained. Regeneration, exhaustive selector/input truth tables, actual colour-function checks across 1,280 positions and all ignored fg/bg inputs, shared-intermediate refusal and Python compilation passed. The separately staged binaries are `c77c5a3934efd60a55b45f9814a12e9ac84f75255c881227bd3174a989e9fc74` at `/cores/console138k/desktop-vga-grey.bin` and `f32c76ab19a9d12853c11c1188488aed3f174031a582db82d768a9110efb22c0` at `/cores/console138k/desktop-vga-grey-bands2.bin`, both 4,492,268 bytes. The user power-cycled before each diagnostic load and baseline restoration; all three loads completed and returned three consistent core-ID/socket pairs at core 84, ABI 1.1 and `0x0230`. The exact original baseline is running again with `osd desk on`, and the boot image is preserved. In response to the user's doubling hypothesis, source review confirms that the 640x360 desktop repeats pixels horizontally and vertically on the 1280x720 raster, without intentional black gaps, and routed RGB register enables are constant VCC rather than alternate-pixel strobes. The results narrow the observed failure but do not establish every colour/transition or identify a repair. `evidence/desktop-vga-grey.txt` preserves reproduction, artifacts and limits. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed only this appended entry changed there and that `core.md` and settled history remain intact, and validated sequential numbering, the four-field header, six canonical sections, prose, allowed Status values and the 45-entry capacity. No FPGA RTL or new third-party source was introduced.
+
+#### Next Steps:
+
+Compare actual mapped font/colour selection and coordinate alignment with the expected repeated pixel pairs before choosing another hardware change, retaining the distinction between source simulation, routed truth functions and packed hardware behavior. The constant-grey and fine-grey comparisons are complete; intended 2x scaling does not itself explain black columns, and the unresolved visual distinction between the two fine greys must not be treated as direct proof of their waveform. Preserve the baseline and require fresh power cycles for loads; the missing HCLK interconnect, HDMI failure, uncommitted TinyTang socket-retry fix and deferred desktop patch consolidation remain open.
+
+#### Files Modified:
+
+- tools/make-vga-pattern.py
+- evidence/desktop-vga-grey.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---
