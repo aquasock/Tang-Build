@@ -1756,3 +1756,33 @@ Trace the `clock_pips` build path for tile `(54,88)` through `chipdb_builder` an
 - User Test: N/A
 
 ---
+
+## 57 COMMIT Unreleased 2026-10-10T08:34:14-07:00
+
+#### Coming From:
+
+Unreleased 7c53791
+
+#### Purpose:
+
+Assess whether the agent itself could run inside the Tang rather than on the workstation, and settle what that would and would not buy this project.
+
+#### Outcome:
+
+The question was whether Codex, Codewhale or Claude could run on the AE350, since the agent already has broad access to the workstation, and the assessment is that the model cannot run there and that the useful part of the idea is different. Two things had to be separated first: what runs on the workstation is not the model but the harness, the shell and file and tool access that gives the agent hands, so the intelligence is served elsewhere and there is nothing on the PC to port that would carry the thinking with it; and the AE350 is a genuinely capable platform, with `crt0.S` and `linker.ld` and `main.c` software, a file-request mailbox to the BL616, `USER()` debug registers, a JTAG loader, the Gowin DDR3 controller in `ae350_ddr3_top.sv` and a PSX JIT in `lightrec`, so the assessment is about compute and memory rather than about whether the platform exists. The numbers settle it: an LLM needs roughly two FLOPs per parameter per token and must read every parameter every token, while the AE350 is a scalar RV32 with no vector unit at optimistically a few hundred MFLOP/s and DDR3 bandwidth through the Gowin controller of perhaps a gigabyte or two per second, so a one-billion-parameter model at four bits is about five hundred megabytes of weights and spends roughly half a second per token merely streaming them, and a model small enough to be quick, on the order of ten million parameters, cannot hold a conversation of this kind or follow an argument like the mode being identical and therefore not the cause. The conclusion is stated as a bound rather than a preference: a model that fits there cannot do this work and a model that can do this work cannot fit there, and the one hundred and thirty-eight thousand LUTs do not change it, since a fabric accelerator might reach a few GFLOP/s, enough for a toy model at seconds per token and not for an agent. The useful reading of the question is then recorded, because it points at the real constraint: what limits the agent inside the FPGA is not intelligence but instruments, since every result this session came through the user, who looked at the CRT and drew pixel maps, pressed the power button and typed the commands, and the two decisive facts of the day, that the mode is identical and that the vendor-site build is dead, both came from the user's eyes rather than from the agent. The direction chosen, and it needs no processor at all, is therefore to give the agent senses inside the fabric: cycle counters like those `fpga/clock-smoke` already uses, which measure real clock rates on the board and settled a factor-of-two ambiguity in entries six to eight by counting cycles rather than reading bits, ported into the desktop core and read through the keylink that already answers. That answers the user's own framing, that it is not yet known whether the FPGA is actually running properly and that another RISC-V should not be added to the mix yet: a cycle counter reports whether each clock is at its intended rate on silicon, and counters placed far apart on the die and driven by the same net report whether the clock reaches regions the model claims it does not, which is a direct hardware test of the nine hundred and forty-three fabric fallbacks. Either outcome is decisive, since clocks that are correct confirm the model is pessimistic and redirect the search, and clocks that are wrong find the defect directly. One risk is recorded because this session measured it: any change tips this design into hold violations, so the monitor must be as small as possible and its tipping the timing would itself be a finding. No code was written and no build was run in this cycle, so all three statuses are not applicable, and nothing in either repository was modified. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 57 of the active log and a count within the 100-entry limit. Records this as settled assessment rather than an open proposal: the question is answered and the direction is chosen.
+
+#### Next Steps:
+
+Port a cycle counter into the desktop core, as small as it can be made, and read it back through the keylink that already answers, to report on silicon whether each clock is at its intended rate; then place counters far apart on the die on the same clock net and read them back, which tests directly whether the clock reaches the regions the model says it does not. If the counters tip the design into hold violations, record that as evidence about the missing margin rather than as a failure. Do not add an AE350 or any other processor until the FPGA is known to be running correctly, and do not resume the chipdb modelling until the clock question has an answer from hardware; the pair-set comparison at tile `(54,88)` in `evidence/clock-chipdb-ground-truth.txt` remains the modelling lead when it does. The board is on the bootable baseline with the perfect reference on the card as `desktop-oldgood-test.bin`; the HDMI HCLK failure, the uncommitted TinyTang socket-retry fix and the deferred desktop patch consolidation remain open.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---
