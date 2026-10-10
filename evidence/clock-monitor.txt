@@ -175,9 +175,35 @@ actually produces, and the constraint is the conservative one.
 configuration, where VGA is on the PMOD and the OLED panel is not in play; the
 reading is recorded but establishes nothing either way about the screen.
 
-Not established here
---------------------
-The screen was not reported by the user.  `User Test` is therefore `NOT RUN` in
-the log entry: an agent-run device-side readback is evidence about the clocks,
-and the log's own rules say it is not a substitute for user acceptance.
+The user's report, and what it changes
+-------------------------------------
+The user reports a **perfect VGA image** with this core loaded, at the console
+prompt.  The bitstream was confirmed before the observation was attributed: the
+running core answers the monitor's stamp (`fpgar 134` -> `0x4d4f4e31`, status
+0) and the desktop magic (`fpgar 0` -> `0x00544453`), so the image is
+`desktop.90d3fa3a84fa.bin` and not the baseline.
+
+That overturns the standing conclusion.  Entry 55 closed the vertical-line
+investigation with "there is no clean placement to sweep for -- only dead or
+lined", because every timing-clean configuration found was the lined baseline.
+This build is timing-clean too (setup 0, hold 0) and renders perfectly, so the
+lines are **placement-dependent, and a good placement exists**: the same
+current source that is lined at the baseline's placement is clean at seed 17
+with `pll_nes` at `PLL_R[0]`.
+
+It also needs no new mechanism to explain it, only the one already measured.
+The same build's clocks were read back on silicon as correct (21.504 MHz `clk`,
+74.250 MHz `hclk`), so clock *rate* was never the lines' cause; what differs
+between the two clean placements is skew.  This placement routes `clk` at
+4.077 ns over 1199 sinks where the baseline's own evidentiary record carries
+4.389 ns -- suggestive of the lever, but measured on a netlist about 75 cells
+different, so it is a lead and not a controlled comparison.
+
+Caveats, stated because this project has paid for assuming stability before: a
+single session's observation is not a stability result, and entry 55's own
+standard was four power cycles before calling a display good.  Stability is
+unconfirmed and repeat power cycles are the next evidence.  The root cause is
+untouched: 1199 `clk` fabric fallbacks remain, 256 more than the baseline, and
+what changed is only that this placement's consequence for the picture is
+invisible.
 

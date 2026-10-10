@@ -1818,3 +1818,33 @@ Ask the user what the screen shows with the monitor core loaded, since the displ
 - User Test: NOT RUN
 
 ---
+
+## 59 COMMIT Unreleased 2026-10-10T10:07:32-07:00
+
+#### Coming From:
+
+Unreleased 0b185a8
+
+#### Purpose:
+
+Record the user's hardware result for the monitor core and the conclusion it overturns, which entry 58's Next Steps asked for and could not obtain in its own cycle.
+
+#### Outcome:
+
+The user reports a **perfect VGA image** on the monitor core, at the console prompt, and the observation is tied to a named bitstream rather than assumed: the running core answers the monitor's stamp, `fpgar 134` returning `0x4d4f4e31` with status 0, and the desktop magic, `fpgar 0` returning `0x00544453`, so the picture is `desktop.90d3fa3a84fa.bin` and not the baseline. That overturns a standing conclusion. Entry 55 closed the vertical-line search with the finding that there is no clean placement to sweep for, only dead or lined, because every timing-clean configuration it could reach was the lined baseline; this build is timing-clean on the same terms, setup 0 and hold 0, and renders perfectly, so the vertical black lines are placement-dependent and a good placement exists -- the same current source that is lined at the baseline's placement is clean at seed 17 with `pll_nes` at `PLL_R[0]`, and the pins that make that reachable were committed in this cycle's previous commit. No new mechanism is needed to explain it, only the one already measured: the same build's clocks were read back as correct, 21.504 MHz for `clk` and 74.250 MHz for `hclk`, so clock rate was never the lines' cause, and what differs between the two clean placements is skew. This placement routes `clk` with 4.077 ns of skew over 1199 sinks, against the 4.389 ns recorded for the baseline, which is a lead and not a controlled comparison because the two netlists differ by about 75 cells. Two limits are recorded rather than glossed. First, this is one session's observation and not a stability result, and entry 55's own standard was four power cycles before calling a display good, so repeats are the next evidence and the claim here is that the image was perfect once, not that the configuration is stable. Second, the root cause is untouched: 1199 `clk` fabric fallbacks remain, 256 more than the baseline, and all that has changed is that this placement's consequence for the picture is invisible. The monitor's own answer stands unchanged and is the substantive half of this cycle: the clocks run at their intended rates on silicon in an open-flow-built core, which is what entry 57 asked for and the timing model could not answer. `evidence/clock-monitor.txt` now carries the user's report and the attribution check beside the silicon measurements. TinyTang's own log entry 72 keeps `User Test: NOT RUN` because that entry is settled history and the syntax rules forbid rewriting it; this entry is where the acceptance is recorded, and the observation concerns an image built by this repository's flow rather than a change in that one. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 59 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Have the user power-cycle the board several times with `desktop.90d3fa3a84fa.bin` as the boot default and report each result, since a single perfect image is a point and entry 55's standard was four power cycles before stability was believed; if it holds, this becomes the shippable desktop configuration -- seed 17 with the now-committed `pll_nes` pin -- and it should go on the card as the baseline, which is a one-line change to `desktop.bin` and a decision for the user rather than the agent, because it would displace the lined baseline that this project has been measuring against. If the difference between 4.077 ns and 4.389 ns of `clk` skew is to be claimed as the lever rather than a lead, the lined baseline's skew has to be measured on a like-for-like netlist, which means re-routing the preserved `build/vga-diagnostic/baseline/pnr-input.json` with `tools/clock-skew-report.py` as the post-route hook and the same constraints. Do not resume the old placement sweeps for a clean seed: one has been found and named, and entry 55's search is answered. The chipdb lead in `evidence/clock-chipdb-ground-truth.txt` is unchanged and remains the root cause of the 1199 fallbacks, and the uncommitted TinyTang socket-retry fix and deferred desktop patch consolidation remain open.
+
+#### Files Modified:
+
+- evidence/clock-monitor.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: PASS
+
+---
