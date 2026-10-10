@@ -87,19 +87,51 @@ bash "$here/pnr-desktop.sh" "$tree" "$tree/nestang-top-open.json"
 # same bar for its own binary ("zero setup/hold violations"), so require it here
 # and refuse to pack.  tools/pnr-timing.py explains why this reads the log:
 # hold violations appear in no structured field of nextpnr's report.
-log "=== 2b. timing gate (seed $SEED) ==="
+log "=== 2b. timing gate: setup and hold (seed $SEED) ==="
 if ! "$PY" "$root/tools/pnr-timing.py" "$tree/.open-pnr/nextpnr.log" \
-    --require-dedicated-clock clk \
     --require-clock keyboard_link.clk=50 \
     --require-clock desktop_sockets.pixel_clk=74.25 \
     --require-clock clk=21.49; then
     log ""
-    log "REFUSING TO PACK: the place-and-route has timing violations."
+    log "REFUSING TO PACK: the place-and-route has setup or hold violations."
     log "A bitstream from this netlist is not one to put on the board."
-    log "The paths and their slack are above; what causes the skew, and the"
-    log "PLL site that decides it, are recorded in"
-    log "$tree/src/desktop/desktop.cst and evidence/hclk-route-gap.txt."
+    log "The paths and their slack are above; the PLL site that decides the"
+    log "main clock's skew is recorded in $tree/src/desktop/desktop.cst and"
+    log "evidence/hclk-route-gap.txt."
     exit 1
+fi
+
+# --------------------------------------------------------------------------
+# 2c. clock topology gate.
+#
+# A clean violation count is NOT evidence that the clocks work.  The chipdb's
+# HCLK interconnect is incomplete, so nextpnr can route a clock on general
+# fabric -- or complete it on "global resources only" -- and report no problem
+# at all.  On 2026-10-09 a build passed every timing check here and did not
+# boot on the board, while the build that does boot also fails this gate.  A
+# pass has to be measured, not assumed, so every clock net is inventoried and
+# any one that does not ride the dedicated network stops the build.
+#
+# The override exists because experimental bitstreams still have to be built to
+# be tested on hardware.  It bypasses ONLY this topology gate -- never the
+# setup/hold gate above -- and the build is then labelled unverified on the way
+# out.  Do not describe such a build as a good core.
+log "=== 2c. clock topology gate ==="
+if ! "$PY" "$root/tools/clock-route-inventory.py" "$tree/.open-pnr/nextpnr.log"; then
+    log ""
+    log "CLOCK TOPOLOGY UNVERIFIED: at least one clock net does not ride the"
+    log "dedicated clock network.  Static timing over an unmodelled clock"
+    log "network says nothing about the clock the board will actually see."
+    log "The gap and its cause: evidence/hclk-route-gap.txt."
+    if [[ -z ${ALLOW_UNVERIFIED_CLOCK:-} ]]; then
+        log ""
+        log "REFUSING TO PACK.  Set ALLOW_UNVERIFIED_CLOCK=1 to pack anyway;"
+        log "the result is an experimental bitstream, not a verified core."
+        exit 1
+    fi
+    log ""
+    log "ALLOW_UNVERIFIED_CLOCK is set: packing an UNVERIFIED-clock build."
+    log "Label it experimental.  It is not a good core until the board says so."
 fi
 
 # ----------------------------------------------------------------- 3. packing

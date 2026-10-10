@@ -1443,3 +1443,38 @@ Hand off the failed installed image and experimental build integration for inves
 - User Test: FAIL
 
 ---
+
+## 47 COMMIT Unreleased 2026-10-09T21:08:43-07:00
+
+#### Coming From:
+
+Unreleased 4364a8c
+
+#### Purpose:
+
+Establish whether a clean timing report actually proves the desktop core's clocks work, and make the flow refuse to publish a bitstream whose clocks are not on the dedicated network.
+
+#### Outcome:
+
+The user asked, after two "good core" claims that failed on hardware, whether the flow is checking the clocks for real and whether there are more unmodelled routes than the 943 already known, and the answer is measured rather than argued: the gate was inverted. Run with the build script's own arguments, the existing `tools/pnr-timing.py` fails the baseline that boots VGA (`build/vga-diagnostic/timed/nextpnr.log`, `84915457...`) and passes the DCS build that did not boot (`3f8704bb...`), because it required only `clk` to be dedicated and the DCS transform moved exactly that one clock. The 943 is one net's sinks and not 943 nets: `clk`'s 943 flip-flops fall back to fabric, while the same log shows `hclk5` (four sinks), `clk27` (one) and the 74.25 MHz `desktop_sockets.pixel_clk` on global resources -- the last carrying no warning at all, and present in the good build too, so the count is neither complete nor a bound. Four changes follow. The new `tools/clock-route-inventory.py` inventories every clock net and exits non-zero unless all are dedicated, with no report-only mode; `scripts/build-desktop-core.sh` splits the gate into a hard setup/hold gate with no override and a topology gate that refuses to pack unless `ALLOW_UNVERIFIED_CLOCK=1`, which bypasses only the topology gate and labels the build unverified; `scripts/pnr-desktop.sh` makes the static-DCS transform opt-in because it produced the non-booting image; and `tools/pnr-timing.py` now also rejects a clock that reports `routed but not connected end to end`, which closes a hole where a partly routed clock that later printed `was routed.` was called dedicated. The integrated flow was run end to end: with the DCS transform off and the override set it produced `desktop.fs` `84915457d3dcab4103d2d8f441ad351af639cd96beb993c6b3841d00cc9c8f56`, byte-identical to the preserved VGA baseline, and without the override the same build routed, passed the hard gate, and was refused at the topology gate with exit 1. For the root gap, the new `tools/chipdb-hclk-gaps.py` measures the chipdb's HCLK pips and finds 171 tiles, 105 at the die edges and 66 on row 108, and 876 wire names of which 236 are consumed but never driven and 316 are driven but never consumed, with the input-mux wires the prior evidence named (`HCLK_UNK571`, `581`) confined to a single tile rather than spanning; one negative result is recorded because it refutes the simplest story, since by shared wire name the tiles form a single connected component, so the interconnect is not grossly absent and the modelling work is a specific path. Every result is offline and reproducible from the logs and chipdb already present, and no hardware was touched. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 47 of the active log and a count within the 100-entry limit. No FPGA RTL, no firmware and no third-party source was changed; the apicula fork's chipdb was read, not modified.
+
+#### Next Steps:
+
+Restore the board before any hardware test, since the card still carries `3f8704bb...` at `/cores/console138k/desktop.bin` and `desktop.fs`, the preserved `84915457d3dcab4103d2d8f441ad351af639cd96beb993c6b3841d00cc9c8f56` baseline is the restoration source, and the SD card and serial port must be attached first. Then close the root gap the inventory located: model the HCLK interconnect the chipdb leaves undriven, the 236 consumed-but-unfed wire names, beginning with the input mux at `(81,181)`, from the vendor `.dat`/`.fse` the builder already parses, and use `tools/clock-route-inventory.py`'s count of non-dedicated clocks falling to zero as the acceptance measure, since an offline pass means nothing until that count reaches zero. Do not re-run the completed colour-pattern or DCS controls, do not treat a gate pass as hardware acceptance, and do not identify a build by its size on the card. The VGA vertical-line defect, the HDMI HCLK failure, the uncommitted TinyTang socket-retry fix and the deferred desktop patch consolidation remain open.
+
+#### Files Modified:
+
+- scripts/build-desktop-core.sh
+- scripts/pnr-desktop.sh
+- tools/clock-route-inventory.py
+- tools/chipdb-hclk-gaps.py
+- tools/pnr-timing.py
+- evidence/clock-topology-verification.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: NOT RUN
+- User Test: NOT RUN
+
+---

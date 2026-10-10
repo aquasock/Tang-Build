@@ -17,6 +17,11 @@ Hold violations appear in no structured field -- they are text in the log -- and
 hold is the failure this core actually has. Required-clock checks also reject a
 missing domain or a clock inadvertently checked at the 12 MHz default.
 
+This tool sees setup/hold violations and the clocks it is asked about. It does
+NOT prove a clock reached the dedicated network, and on this device that is the
+whole question -- `tools/clock-route-inventory.py` answers it for every clock at
+once and is the topology half of the gate.
+
 A violation block looks like this, one per violated path:
 
     Warning: Hold/min time violation for clock 'posedge clk':
@@ -96,7 +101,10 @@ def main(argv):
     parser.add_argument("--require-clock", action="append", default=[],
                         metavar="NAME=MHZ", help="require a reported clock at this frequency")
     parser.add_argument("--require-dedicated-clock", action="append", default=[],
-                        metavar="NAME", help="require a completed global route with no fabric fallback")
+                        metavar="NAME",
+                        help="require a completed dedicated route with no fabric fallback "
+                             "and no partial connection (see tools/clock-route-inventory.py "
+                             "to check every clock at once)")
     args = parser.parse_args(argv[1:])
     required = {}
     for item in args.require_clock:
@@ -138,11 +146,17 @@ def main(argv):
         log = open(path, encoding="utf-8", errors="replace").read()
         for name in args.require_dedicated_clock:
             clock = re.escape(name)
-            routed = re.search(rf"^Info:\s+'{clock}' net was routed(?: using global resources only)?\.$",
+            routed = re.search(rf"^Info:\s+'{clock}' net was routed\.$",
                                log, re.MULTILINE)
             fallback = re.search(rf"^Warning: Failed to route net '{clock}' .* using dedicated routing\.$",
                                  log, re.MULTILINE)
-            passed = bool(routed) and not fallback
+            # A clock that is only partly connected can still print a later
+            # "was routed." line, so require the absence of the partial line as
+            # well: presence of the good line alone does not prove the route.
+            partial = re.search(
+                rf"^Info:\s+'{clock}' net was routed but not connected end to end;",
+                log, re.MULTILINE)
+            passed = bool(routed) and not fallback and not partial
             file_failed |= not passed
             print(f"  {'PASS' if passed else 'FAIL'} dedicated clock {name}")
 

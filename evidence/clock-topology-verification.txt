@@ -1,0 +1,159 @@
+# "Passing timing" did not mean the clock worked: the inversion, the fix, and the remaining gap
+
+The desktop core has now been declared good twice and failed on hardware twice.
+The first time, `scripts/pnr-desktop.sh` passed nextpnr `--timing-allow-fail`
+and nothing read the report; the build carried ten hold violations. The second
+time is worse, because the flow *was* gated: a build that passes every check
+shipped and did not boot. This file records why, what now measures it, and what
+is still missing. Everything here is reproducible offline from the logs and the
+chipdb already in the repository.
+
+## 1. The gate was inverted, and that is measurable
+
+`tools/pnr-timing.py` was invoked by `scripts/build-desktop-core.sh` with
+`--require-dedicated-clock clk` and nothing else. That single named clock is the
+whole defect: the check asks whether *`clk`* is dedicated, so a build that
+moves `clk` onto the network without fixing any *other* clock passes.
+
+Run against the three candidates preserved in `build/`:
+
+```
+$ python3 tools/pnr-timing.py build/vga-diagnostic/timed/nextpnr.log \
+      --require-dedicated-clock clk --require-clock keyboard_link.clk=50 \
+      --require-clock desktop_sockets.pixel_clk=74.25 --require-clock clk=21.49
+  FAIL dedicated clock clk
+  summary: fail setup=0 hold=0          -> exit 1
+
+$ python3 tools/pnr-timing.py build/vga-regression/nextpnr-dcs.log \
+      --require-dedicated-clock clk --require-clock keyboard_link.clk=50 \
+      --require-clock desktop_sockets.pixel_clk=74.25 --require-clock clk=21.49
+  PASS dedicated clock clk
+  summary: pass setup=0 hold=0          -> exit 0
+```
+
+- `build/vga-diagnostic/timed/nextpnr.log` is the **baseline that boots VGA**
+  (repacks byte-identically to the running `.fs` `84915457…`). The gate **fails**
+  it, because `clk` falls back 943 times.
+- `build/vga-regression/nextpnr-dcs.log` is the **build that did not boot**
+  (`3f8704bb…`). The gate **passes** it, because the DCS transform moved `clk`
+  onto the network and the check never looked at anything else.
+
+On the only two data points the project has, the acceptance criterion's verdict
+is exactly reversed. `evidence/desktop-clock-distribution.txt` had already
+recorded this against itself -- the new gate "passes this candidate and rejects
+the baseline" -- without its consequence being drawn.
+
+## 2. What "943" is, and what else is riding fabric
+
+`Warning: Failed to route net 'clk' from X177Y27/MPLLCLKOUT0 to X157Y70/CLK1
+using dedicated routing.` is emitted **once per sink**. The 943 is **one net**,
+`clk`, whose 943 flip-flops could not reach the dedicated network and were put
+on general fabric. It is not 943 nets.
+
+`tools/clock-route-inventory.py` inventories every clock net at once and
+separates the four ways a nextpnr log describes a clock's routing -- including
+`routed using global resources only`, which is an `Info:` line with **no
+warning** and is invisible to any check that reads warnings only.
+
+```
+$ python3 tools/clock-route-inventory.py build/vga-diagnostic/timed/nextpnr.log
+  keyboard_link.clk          dedicated
+  desktop_sockets.pixel_clk  global-resources-only
+  clk                        fabric (943 sinks)
+  clk27                      fabric (1 sink)
+  hclk5                      fabric (4 sinks)
+  CLOCK TOPOLOGY UNVERIFIED: 4 of 5 clock net(s) ...        -> exit 1
+```
+
+Two facts fall out. There are **more than one** non-dedicated clock: `hclk5`
+(the TMDS bit clock) and `clk27` fail dedicated routing in *every* build, and
+the **74.25 MHz pixel clock is on global resources in the good build too**. And
+the count is not a bound: the same design measures `clk` fallbacks of 943 in the
+baseline and 2829 in the CLOCK-only candidate, so the number tracks the router's
+choices, not the silicon.
+
+## 3. The four changes
+
+- **`tools/clock-route-inventory.py`** (new) -- the honest measurement. Exit 0
+  iff every clock net is fully dedicated; there is no report-only mode, so a
+  caller cannot mistake a printed table for a pass.
+- **`scripts/build-desktop-core.sh`** -- the gate is split in two. `2b` is the
+  hard gate (setup/hold + required clocks, no override). `2c` is the topology
+  gate (the inventory); it refuses to pack unless `ALLOW_UNVERIFIED_CLOCK=1` is
+  set, and the override bypasses **only** `2c`, never `2b`, and labels the build
+  unverified on the way out.
+- **`scripts/pnr-desktop.sh`** -- the static-DCS main-clock transform is now
+  **opt-in** (`DESKTOP_DCS_DISTRIBUTION=1`), not the default, because it produced
+  a non-booting bitstream.
+- **`tools/pnr-timing.py`** -- fixed a hole: a clock that prints
+  `routed but not connected end to end` can still print a later `was routed.`
+  line, so `--require-dedicated-clock` now also requires the absence of the
+  partial line. Verified with a synthetic log (partial -> exit 1, clean -> exit 0).
+
+## 4. The build now reproduces the baseline that boots
+
+With the DCS transform off and the topology override set, the integrated flow
+was run end to end (seed 23, the pinned `pll_nes`):
+
+```
+$ ALLOW_UNVERIFIED_CLOCK=1 bash scripts/build-desktop-core.sh \
+      /run/media/vash/GIT/TinyTang/build/desktop/reconstruct.jhpQys
+main-clock distribution: off (plain PLL clock; the hardware-proven path)
+=== 2b. timing gate: setup and hold (seed 23) ===   pass setup=0 hold=0
+=== 2c. clock topology gate ===                     CLOCK TOPOLOGY UNVERIFIED
+ALLOW_UNVERIFIED_CLOCK is set: packing an UNVERIFIED-clock build.
+   desktop.fs  84915457d3dcab4103d2d8f441ad351af639cd96beb993c6b3841d00cc9c8f56
+```
+
+That `84915457…` is byte-identical to `/home/vash/tools/desktop-clean/desktop.fs`
+(the running VGA baseline), so turning the DCS default off restores the
+hardware-proven configuration exactly and the flow is deterministic. Without the
+override the same build stops at `2c` with `REFUSING TO PACK` and exit 1
+(observed: routed netlist produced, hard gate pass, topology gate refuse).
+
+## 5. The root gap, started: the chipdb's HCLK inventory
+
+The clock network is modelled only where the tiles are. `tools/chipdb-hclk-gaps.py`
+(new) measures the pips:
+
+```
+HCLK tiles: 171 across rows 0..108
+  at the die edges (x=0, x=181): 105; interior (row 108): 66
+HCLK wire names seen: 876
+  spanning (carry between tiles) : 132
+  UNDRIVEN (consumed, no source) : 236
+  dead-end (source, no consumer): 316
+
+HCLK_UNK561   dead-end            src=[(81,181)] dst=[]
+HCLK_UNK563   dead-end            src=[(81,181)] dst=[]
+HCLK_UNK571   intra-tile only     src=[(81,181)] dst=[(81,181)]
+HCLK_UNK581   intra-tile only     src=[(81,181)] dst=[(81,181)]
+HCLK_UNK585   absent from hclk_pips
+```
+
+So there are **236 HCLK wire names that are consumed but never driven** -- a
+different count and a different sense of "missing wire" from the 943 router
+fallbacks, and the largest concrete incompleteness measured so far. The wires
+`evidence/hclk-route-gap.txt` names as the input-mux feed (`571`, `581`) are not
+even spanning: they are confined to tile `(81,181)`, so the mux input cannot be
+reached from another tile.
+
+One honest negative result: sharing a wire *name* across tiles is necessary but
+not sufficient for a route, and by that weak measure the 171 tiles form a single
+connected component. So the naive story -- "the interconnect is simply absent" --
+is wrong; the model is not grossly disjoint. What nextpnr could not route is a
+specific path, and identifying it is the modelling work, not this inventory.
+
+## Limits
+
+- Nothing here is hardware evidence. The gate decides whether a *model* is
+  self-consistent; only a power cycle with repeated UART read-back and a visual
+  check decides whether a bitstream works. Judge console results on repeated
+  reads.
+- `tools/clock-route-inventory.py` reads the router's own report. It says what
+  nextpnr *decided*, not what the die does.
+- The 236 undriven wires are undriven *within `hclk_pips`*; a wire may
+  legitimately be driven from outside the HCLK pip set. The count bounds the
+  model's internal incompleteness, not the die's.
+- The chipdb HCLK modelling itself is not done. Section 5 locates the gap; it
+  does not close it.

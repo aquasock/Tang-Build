@@ -15,7 +15,7 @@
 # path below.  The script refuses the suite's copy outright rather than trying
 # to place and reporting a wall that is really a wrong binary.
 #
-# Three pieces of design-to-toolchain translation are needed first, and all are
+# Two pieces of design-to-toolchain translation are needed first, and both are
 # done here rather than by editing the design:
 #
 #  * nextpnr's SDC reader does not accept `//` comments, and desktop.sdc opens
@@ -26,8 +26,12 @@
 #    It is dropped -- but only after checking it really is unused, because
 #    silently deleting a port that something reads would be worse than the
 #    error it avoids.
-#  * the main PLL clock needs an explicit CLOCK/BUFG entry and static DCS to
-#    reach the modeled clock network across the die, rather than fabric clocks.
+#
+# A third transform, forcing the main PLL clock onto the modeled clock network
+# through a static DCS, lives in tools/desktop-clock-distribution.py.  It made
+# the clock route in the model and produced a bitstream that did not boot on
+# hardware (2026-10-09), so it is off unless DESKTOP_DCS_DISTRIBUTION is set; a
+# plain build reproduces the configuration that boots VGA.
 set -euo pipefail
 export LC_ALL=C
 
@@ -190,8 +194,19 @@ yosys -q -s "$work/drop.ys" > "$work/drop.log" 2>&1 || {
     exit 1
 }
 
-python3 "$here/../tools/desktop-clock-distribution.py" \
-    "$work/pnr-input.json" "$work/pnr-clocked.json"
+# The static-DCS main-clock distribution is an EXPERIMENT, not a default.  It
+# made the PLL clock route on dedicated resources in the model and produced a
+# bitstream that did not boot on the board (2026-10-09), so it is off unless
+# asked for.  A plain build reproduces the configuration that boots VGA.
+pnr_json=$work/pnr-input.json
+if [[ -n ${DESKTOP_DCS_DISTRIBUTION:-} ]]; then
+    echo "main-clock distribution: static DCS ENABLED (experimental)"
+    python3 "$here/../tools/desktop-clock-distribution.py" \
+        "$work/pnr-input.json" "$work/pnr-clocked.json"
+    pnr_json=$work/pnr-clocked.json
+else
+    echo "main-clock distribution: off (plain PLL clock; the hardware-proven path)"
+fi
 
 # ------------------------------------------------------------------ nextpnr --
 echo
@@ -214,7 +229,7 @@ pnr_extra=()
 
 set +e
 "$nextpnr" \
-    --json "$work/pnr-clocked.json" \
+    --json "$pnr_json" \
     --write "$work/pnr.json" \
     --device GW5AST-LV138PG484AC1/I0 \
     --vopt cst="$cst" \
