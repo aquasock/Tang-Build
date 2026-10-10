@@ -1998,3 +1998,33 @@ Make the central clock mux part of the clock model rather than adding pips insid
 - User Test: N/A
 
 ---
+
+## 65 COMMIT Unreleased 2026-10-10T11:33:54-07:00
+
+#### Coming From:
+
+Unreleased 70084b1
+
+#### Purpose:
+
+Correct entry 64's evidence, which was measured on the wrong graph, and record what measuring the right one establishes about the clock model's two graphs.
+
+#### Outcome:
+
+Entry 64 is superseded in its evidence rather than in its conclusion. Its gate, `tools/chipdb-hclk-gaps.py`, reads **`hclk_pips` only**, but the change it was judging lives in **`clock_pips`**, which `fse_clock_pips_138` fills and which `himbaechel/uarch/gowin/gowin_arch_gen.py` reads into the routing graph at line 916, alongside `hclk_pips` at line 930 -- two different fields, so a change inside `fse_clock_pips_138` could not move the counts entry 64 quoted, and the flat 132/236/316 showed only that. Re-measured on the graph the change actually feeds, by dumping every tile's clock matrix: dest-entries 484 before and after, wire names **474 to 531**, cross-tile names **49 to 49**. The change therefore adds 57 names and no new cross-tile connection at all, so entry 64's conclusion stands -- admitting table 38's sources does not make the clock hub reachable -- and it now stands on a measurement of the right graph rather than on one that could not have disagreed. Two facts came out of the re-measurement and are the reason it was worth doing. First, **the model's two clock graphs share exactly one wire name, and it is `VCC`**: `hclk_pips` carries 876 names and `clock_pips` 531, with 875 and 530 of them exclusive, because they are drawn from different name tables. The join between the HCLK plane and the clock network is therefore a **node** statement and not a name one -- `gw5_make_hclk_to_clk_nodes`, driven by the measured `_gw5a_hclk_to_clk` map from block and lane to clock-network wire id -- which means any attempt to join the two by adding names to either graph is aimed at the wrong mechanism. Second, `HCLK_MUX_EPSILON30` is an `hclk_pips` name **only** and is absent from `clock_pips` entirely, so the driver it is missing has to be supplied inside the HCLK plane; that is where the next attempt should look, and it is a narrower target than \"the central clock mux\", which is what entry 64's Next Steps sent the next agent after. The fingerprint left on the toolchain is again nil: the apicula fork was restored with `git checkout` and the chipdb from the copy taken before the first rebuild, and both were verified rather than assumed -- source clean at `4281068` and the chipdb back to `57a1c2a5...` at 850,124 bytes. No board action was taken and no bitstream was built, so all three statuses are not applicable. `evidence/hclk-table38-admission.txt` carries the correction, the re-measured numbers, the two new facts and the limits, including that a shared wire name across tiles is necessary and not sufficient for a routable path. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 65 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Target the HCLK plane itself, because `HCLK_MUX_EPSILON30` is an `hclk_pips` name and the wire it feeds, `HCLK_MUX_GAMMA30`, is fed from that graph alone; the question to answer next is what should drive EPSILON30 and why the builder does not emit it, read from the vendor's own table 48 and the HCLK block cells rather than inferred. Gate any change in that graph with `tools/chipdb-hclk-gaps.py`, whose counts are the right measure for it, and require `spanning` to rise above 132 with the fork restored if it does not -- the same test that has now correctly closed three attempts. Do not try to join the HCLK plane to the clock network by adding names to either graph: they share only `VCC`, and the join this model already has is a node statement from the measured `_gw5a_hclk_to_clk` map. Keep in view that HCLK blocks 0 `(27,0)` and 1 `(27,181)` have no modelled clock escape at all, and that even a router-level success has to be confirmed on the board with VGA still perfect. Still open and untouched: the seed-19 discriminator in `build/clock-monitor/desktop.aa6b0f9d733b.bin`, the uncommitted TinyTang socket-retry fix, and the TinyTang active-log numbering non-conformance.
+
+#### Files Modified:
+
+- evidence/hclk-table38-admission.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

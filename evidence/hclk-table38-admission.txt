@@ -75,3 +75,54 @@ cross-tile route and not a sufficient one, so a flat spanning count proves only
 that this change did not add a cross-tile wire -- it does not by itself prove a
 future change that does raise it would route.  No routing was run and no board
 was involved; the change was not kept, so no bitstream was built from it.
+
+---
+
+## Correction, same day: the first reading used the wrong graph
+
+The gate above is `tools/chipdb-hclk-gaps.py`, and it reads **`hclk_pips` only**.
+But `fse_clock_pips_138` fills **`clock_pips`** -- a different field, and
+`himbaechel/uarch/gowin/gowin_arch_gen.py` reads *both* into the routing graph
+(`clock_pips` at line 916, `hclk_pips` at 930).  A change inside
+`fse_clock_pips_138` therefore **cannot** move the `hclk_pips` counts, and the
+flat 132/236/316 above showed only that.  The conclusion happened to be right;
+the evidence for it was not.
+
+Re-measured on the graph the change actually feeds, `clock_pips`, dumping every
+tile's matrix and counting wire names and cross-tile names:
+
+```
+                        dest-entries   names   cross-tile names
+  baseline                    484        474            49
+  table 38 admitted           484        531            49
+```
+
+So the change adds **57 new wire names** to the clock-mux graph and **no new
+cross-tile connection at all** -- the same verdict as the `hclk_pips` counts, now
+measured where it counts.  The conclusion stands: admitting table 38's sources
+does not make the clock hub reachable.
+
+## What the re-measurement turned up on the way, which is the useful part
+
+- **The model's two clock graphs share exactly one wire name, and it is `VCC`.**
+  `hclk_pips` carries 876 names, `clock_pips` 531, with **875** hclk-only and
+  **530** clock-only.  They are drawn from different name tables, so by name they
+  are disjoint.  The join between the HCLK plane and the clock network is a
+  **node** statement, not a name one -- `gw5_make_hclk_to_clk_nodes`, driven by
+  the measured `_gw5a_hclk_to_clk` map of block/lane to clock-network wire id.
+  Anything that tries to join them by adding names to one graph cannot work.
+- **`HCLK_MUX_EPSILON30` is an `hclk_pips` name only.**  It is absent from
+  `clock_pips` entirely, so its missing driver has to be supplied inside the HCLK
+  plane, not by admitting clock-mux rows.
+
+## State
+
+Reverted again and verified: source clean at `4281068`, chipdb back to
+`57a1c2a5...` at 850,124 bytes.  No board action; no bitstream built.
+
+## Limits
+
+Unchanged from above, plus this one: the counts are of *names* in two matrices,
+and a name shared between tiles is necessary but not sufficient for a routable
+path, so a flat cross-tile count rules this change out without licensing the
+opposite inference for any other change.
