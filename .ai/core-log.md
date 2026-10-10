@@ -2296,3 +2296,33 @@ Implement the inbound gate and route it, because that is now a measured target r
 - User Test: N/A
 
 ---
+
+## 75 COMMIT Unreleased 2026-10-10T13:16:54-07:00
+
+#### Coming From:
+
+Unreleased 766c0c2
+
+#### Purpose:
+
+Implement the inbound global-clock gate in the generator and test it by routing the desktop core, since entry 74 found the edge in the vendor's own tables and the acceptance test for a chipdb change is the route and not the gate.
+
+#### Outcome:
+
+The gate was implemented, refined on evidence, and found inert -- and the measurement that makes it inert also closes the avenue. The change is in the CLOCK_MUX loop of `fse_clock_pips_138`, resolving each endpoint against the namespace its own name belongs to instead of always naming it from `clknames`, and letting a row whose destination lands in the HCLK plane past the source filters that would otherwise drop it. The first form preferred any HCLK-ish name and was a measured regression: the database grew to 857,092 bytes at `c2858174...`, and routing the desktop core turned `desktop_sockets.pixel_clk` from zero unrouted arcs into 1068, with the total rising from 1204 to 2272 while `hclk5` stayed at four and `clk` at 1199. The mechanism is the id-means-two-wires boundary this whole series has been circling, and it is visible in the name tables: id 113 is `UNK113` in `clknames`, which is a real clock wire, and `HCLK_UNK113` in `hclknames`, which is a different wire in the HCLK plane, so preferring the HCLK name wherever one exists renames the clock plane's own wires and the pixel clock loses its routes. The second form therefore prefers an HCLK name only when it is *structural* -- `HCLK_GCLK*`, `HCLK_MUX_*`, `HCLK_BUF_*`, `CLKDIV_*`, `L2HCLK*` -- and never the generic `HCLK_UNK*` filler. That one is inert: the database is 852,240 bytes at `c69325c1...` and the architecture 34,238,920 bytes against the control's 34,221,966, so the edges were added and the architecture changed, and **the route is identical to the baseline on every count, `hclk5` four, `clk` 1199, `desktop_sockets.pixel_clk` zero and 1204 in total**. The gate is unchanged at 132, 236 and 316, which is expected because the change is in `clock_pips` and `tools/chipdb-hclk-gaps.py` reads `hclk_pips`; routing is the whole of the evidence for this change. Why it is inert is the finding: the inbound GCLK rows the vendor's tables carry are at tile types 200, 205, 212, 217, 84 and 274, and they drive `HCLK_GCLK06`, `HCLK_GCLK07` and `HCLK_GCLK10`, which belong to blocks 0 and 1, while this design's serialisers and its divider are served by block 3 at `(81,181)`, whose tile type is 276 and which carries no inbound GCLK row at all. The fix is right in kind and lands on blocks the design does not use. Put beside the previous cycle's scan, the position is closed on every side: block 3's entry locals are driven by no row in table 48 at any tile type, the inbound GCLK rows in table 38 exist only for other blocks' tile types, the broad namespace fix is a measured regression on the clock plane and the narrow one is measured inert, so every model-side change available closes either to nothing or to worse. Nothing was landed: both variants exist only in `/tmp`, the fork is clean at `4281068` with its chipdb byte-identical, and no architecture or database was installed anywhere. `evidence/hclk-gclk-inbound-gate.txt` carries the change, both variants with their routing results, the aliasing mechanism that made the first a regression, why the second is inert, and the limits, including that this is one netlist at one seed on one device and that the control reproduced the recorded baseline exactly so the null result is attributable to the architecture. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 75 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Choose between the two things that remain, because the model-side avenue is now closed by measurement rather than by opinion. The first is to force the connection the model cannot derive and judge it on the board, which the project has done once: `tools/desktop-clock-distribution.py` forces the main clock onto the modelled network through a static DCS, it made the clock route in the model, and its bitstream did not boot on 2026-10-09, so repeating that shape should be done knowing the last attempt failed on hardware and with the failing bitstream kept beside the new one for comparison. The second is to stop here, and it is the better-founded choice: every other part of the purpose is met, the gap is characterised down to a wire inside one primitive that the vendor's own tables do not describe for the block this design uses, and the remaining work is a guess whose one previous trial did not boot. If the second is taken, the honest record is a README line and a reference record, not a fix, and the smaller open items are where the time should go: the TinyTang socket-retry fix, the TinyTang active-log numbering non-conformance, and the HDMI connector's pin map the reference does not record. Either way, two things should not be left standing: the two generator defects of entry 73 -- the unreachable inter-HCLK branch and the unwalked bridge cells -- are real and unfixed, and the broad namespace preference measured this cycle must not be re-tried, because preferring `HCLK_UNK<n>` over `UNK<n>` costs the clock plane 1068 routes. The board is untouched and still holds seed 17, VGA perfect and HDMI dark.
+
+#### Files Modified:
+
+- evidence/hclk-gclk-inbound-gate.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

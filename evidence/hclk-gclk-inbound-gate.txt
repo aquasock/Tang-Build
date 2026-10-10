@@ -1,0 +1,97 @@
+The inbound GCLK gate, implemented and tested: a regression, then inert -- and the rows are for the wrong blocks
+
+Cycle 2026-10-10. Base: Tang-Build `766c0c2`, apicula fork `4281068`, chipdb
+`57a1c2a5...`.  **No repository was modified.**  Every database and architecture
+was built in `/tmp` from copies.
+
+Entry 74 found that table 38 carries rows into the HCLK block's global-clock
+pins and that `fse_clock_pips_138` loses them by naming both endpoints from
+`clknames`.  This cycle implemented that fix in the generator, in two forms, and
+tested each by **routing the desktop core** -- the acceptance test, since the
+previous cycle established that a raising gate is not a result.
+
+## The change
+
+In the CLOCK_MUX (table 38) loop of `fse_clock_pips_138`, resolve each endpoint
+against the namespace its name belongs to instead of always using `clknames`:
+
+    src = _resolve(srcid);  dest = _resolve(destid)
+
+with `_resolve` preferring `hclknames[wid]` when that name is a wire of the HCLK
+plane, and `clknames[wid]` otherwise.  Rows whose destination resolves into the
+HCLK plane also bypass the "unknown/longwire" source filters, which are what
+drop the rows whose sources are block-local ids.
+
+## Variant A -- prefer any HCLK-ish name: a regression, and it was measurable
+
+    chipdb  c2858174...  857,092 B     (control 850,124 B)
+    route   hclk5 4   clk 1199   pixel_clk 1068   total 2272
+    baseline hclk5 4  clk 1199   pixel_clk 0      total 1204
+
+`desktop_sockets.pixel_clk` went from zero unrouted arcs to 1068.  The mechanism
+is the same id-means-two-wires boundary the whole series has been circling, and
+it is visible in the name tables:
+
+    id 113   clknames = UNK113        hclknames = HCLK_UNK113
+    id 684   clknames = None          hclknames = HCLK_GCLK30
+
+`UNK113` is a **real clock wire**; `HCLK_UNK113` is a **different wire** in the
+HCLK plane.  Preferring the HCLK name whenever one exists renames the clock
+plane's own wires, and the pixel clock loses its routes.  So the preference must
+not be driven by an id alone.
+
+## Variant B -- structural HCLK names only: inert
+
+Prefer `hclknames[wid]` only when the name is *structural* (`HCLK_GCLK*`,
+`HCLK_MUX_*`, `HCLK_BUF_*`, `CLKDIV_*`, `L2HCLK*`) and never for the generic
+`HCLK_UNK*` filler:
+
+    chipdb  c69325c1...  852,240 B
+    arch    34,238,920 B .bin   (control 34,221,966; variant A 34,294,586)
+    route   hclk5 4   clk 1199   pixel_clk 0   total 1204
+
+**Identical to the baseline on every count.**  No regression and no improvement:
+the edges were added, the architecture changed, and this design's route did not
+move at all.  The gate is unchanged at 132/236/316, as expected -- the change is
+in `clock_pips`, and `tools/chipdb-hclk-gaps.py` reads `hclk_pips`.
+
+## Why it is inert, and why that closes the avenue
+
+The inbound GCLK rows the vendor's tables carry are at tile types 200, 205, 212,
+217, 84 and 274, and they drive `HCLK_GCLK06`, `HCLK_GCLK07` and `HCLK_GCLK10` --
+**block 0 and block 1**.  The design's serialisers and divider are served by
+block 3, at `(81,181)`, whose tile type is 276, and **that tile type carries no
+inbound GCLK row at all.**  So the fix is correct in kind and lands on blocks
+this design does not use.
+
+Put beside the previous cycle's scan, the position is now:
+
+- block 3's entry locals are driven by no row in table 48 at any tile type;
+- the inbound GCLK rows in table 38 exist, but only for other blocks' tile types;
+- the broad namespace fix is a measured *regression* on the clock plane;
+- the narrow one is measured *inert*.
+
+**Every model-side change available closes either to nothing or to worse.**  The
+route from a PLL to the FCLKA of this design's serialisers cannot be made
+dedicated from the vendor's own data by any change this cycle could find.
+
+## What that leaves
+
+The remaining option is the one the project has already tried once and which
+fails on hardware rather than in a report: force the connection the model cannot
+derive, and judge it by whether the board boots.  `tools/desktop-clock-distribution.py`
+is that experiment for the main clock, it made the clock route in the model, and
+its bitstream did not boot (2026-10-09), which is why it is off by default.
+
+## Limits
+
+- One netlist, one placement seed, one device: the verifytree build of
+  `desktop.90d3fa3a84fa.bin`.  The control reproduced the recorded baseline
+  exactly -- 4 / 1199 / 1204 -- so the null result is attributable to the
+  architecture and not to the run.
+- The tile types are the ones found by scanning destinations equal to a GCLK pin
+  id.  Rows that reach a GCLK pin through another id are not covered.
+- Both variants are `clock_pips` changes, so the HCLK-plane gate says nothing
+  about them either way; routing is the whole of the evidence here.
+- Nothing was landed.  The patch exists only in `/tmp`; the fork is clean at
+  `4281068` with its chipdb byte-identical.
