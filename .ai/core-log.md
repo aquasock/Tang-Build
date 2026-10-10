@@ -2116,3 +2116,32 @@ Fix `tools/hdmi-frames.py` so it decides by chroma and not by a luma signature, 
 - User Test: PASS
 
 ---
+## 69 COMMIT Unreleased 2026-10-10T12:19:51-07:00
+
+#### Coming From:
+
+Unreleased 54c06ee
+
+#### Purpose:
+
+Isolate the HDMI defect with the design held constant -- the same RTL through the vendor flow and the open flow -- because Phosphor working where the desktop core does not confounds the toolchain with the design and settles nothing.
+
+#### Outcome:
+
+The experiment is controlled and the answer is that it is the flow. The confound had to be removed first: Phosphor driving HDMI where the desktop core does not is two differences at once, the flow and the design, so it reads as a toolchain result without isolating one. The same RTL was therefore taken through both flows -- `desktop.90d3fa3a84fa.bin`, seed 17 of the open flow, and `/tmp/vendor-monitor/place2/desktop.bin`, `95e9b3e1...`, built the same day by `tools/build_desktop_core.sh 2` from the same sources including the clock monitor, timing PASS -- and each was put on the card with `tangput`, loaded with `tangload`, and captured from the MACROSILICON card as 120 frames of 1280x720 YUYV. Classified by chroma, which is the discriminator the earlier instrument work established: the open build shows **max chroma distinct 1 across all 120 frames**, 59 flat and 61 bearing an overlay, both of which are the card's own monochrome idle behaviour, while the Gowin build of the same design shows **max chroma distinct 24 with 119 of 120 frames carrying colour**, the remaining one a transition. Phosphor, also Gowin-built, behaves like the Gowin desktop build at chroma 22. So with the design held constant the vendor flow produces working HDMI and the open flow produces none, which **confirms the mechanism the project had already located rather than replacing it**: the vendor's place-and-route selects the HCLK network's GAMMA input at the divider for the 371.25 MHz TMDS bit clock where nextpnr selects ALPHA/BETA, fed by `L2HCLK`, the fabric entry, because the chipdb's network input is unconnected, and in the open build `hclk5` fails dedicated routing at all four of its sinks with 2.759 ns of skew on a 2.6936 ns bit period. It also answers the question that prompted the test in the user's own terms: **an open-built Phosphor would very likely lose HDMI the same way**, because the mechanism is the flow's treatment of a 371.25 MHz clock on its way to the serialisers and would apply to any design that flow places, Phosphor included -- Phosphor only works on HDMI today because Gowin placed it. What follows is that the project's remaining gap is precise and correctly aimed: the open flow cannot route the TMDS bit clock to the serialisers, the fix is the chipdb's clock network, and the design, seating, cable, monitor, firmware and capture path are each excluded by experiment rather than argument. Nothing was modified in any repository for this cycle -- both bitstreams already existed, one of them built earlier the same day -- and the apicula fork remains clean at `4281068`. The board is left running the Gowin build, so a power cycle returns it to seed 17. `evidence/hdmi-flow-controlled.txt` carries the two artifacts, the measurement, what it establishes and its limits. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 69 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+The HDMI question is answered and the remaining work is the chipdb's clock network, which entries 64 to 66 narrowed to the synthetic GAMMA/HUB path whose input `HCLK_MUX_EPSILON30` no code drives, and which entry 66 established can only be resolved by measuring what feeds it with the vendor-bitstream oracle method rather than by admitting or inventing entries; that spend remains the user's decision, and this cycle does not change its cost. Two consequences are worth recording next: an open-built core that needs HDMI has a known, located reason to fail, so nothing should be built expecting otherwise until the clock network is modelled; and the project's own instrument, `tools/hdmi-frames.py`, still decides a frame's kind by a luma signature that mislabels a real dark-background picture as the card's logo, which has now produced two wrong conclusions and should be changed to use chroma. Also still open and untouched: the TinyTang socket-retry fix, the TinyTang active-log numbering non-conformance, and the HDMI connector's pin map, which the reference does not record and which any future DDC or EDID work would need. The ~440 MB of raw captures are in `/tmp` and deliberately not committed.
+
+#### Files Modified:
+
+- evidence/hdmi-flow-controlled.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: PASS
+
+---

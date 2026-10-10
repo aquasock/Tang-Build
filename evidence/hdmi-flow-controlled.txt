@@ -1,0 +1,73 @@
+The HDMI defect is the flow, not the design: same RTL, Gowin builds it working and the
+open flow does not
+
+2026-10-10.  This is the experiment the afternoon was building towards, and it
+is controlled: **one design, two flows**.  No source, chipdb or RTL was changed
+for it.
+
+## The confound it removes
+
+Earlier the honest comparison was Phosphor working on HDMI and the desktop core
+not, on the same board, cable, capture card and PC.  That reads as "the toolchain
+is the problem", but Phosphor differs from `desktop.bin` in **two** ways at once
+-- the flow *and* the design -- so it isolated nothing.  What was needed was the
+same RTL through both flows.
+
+## The two artifacts
+
+    flow    artifact                                     stamp        built
+    open    build/clock-monitor/desktop.90d3fa3a84fa.bin 90d3fa3a84fa seed 17 P&R, setup 0 hold 0
+    Gowin   /tmp/vendor-monitor/place2/desktop.bin       95e9b3e1cb88 tools/build_desktop_core.sh 2, timing PASS
+
+Both are the **current design including the clock monitor**, from the same
+sources; the Gowin one was built earlier the same day.  Each was `tangput` to the
+card and loaded with `tangload`, and the HDMI was captured from the
+MACROSILICON card with 120 frames of 1280x720 YUYV.
+
+## The measurement, by chroma
+
+Chroma is the discriminator (evidence/hdmi-instrument-control.txt): a real
+picture varies in it, and the card's own monochrome idle field and overlay both
+sit at exactly 128.
+
+    open seed 17     120 frames   max chroma distinct =  1   flat 59 + monochrome overlay 61
+    Gowin same RTL   120 frames   max chroma distinct = 24   COLOUR 119 + 1 transition
+    Phosphor (Gowin)  60 frames   max chroma distinct = 22   COLOUR 59  + 1 transition
+
+The Gowin build of this design delivers a colour picture on HDMI and holds it for
+the whole capture.  The open build of the same design delivers no colour in any
+frame.  Phosphor, also Gowin-built, behaves like the Gowin desktop build.
+
+## What it establishes
+
+**The flow is the variable.**  With the design held constant, the vendor flow
+produces working HDMI and the open flow produces none.  That confirms the
+mechanism the project had already located rather than replacing it: the vendor's
+place-and-route selects the HCLK network's **GAMMA** input at the divider for the
+371.25 MHz TMDS bit clock, while nextpnr selects **ALPHA/BETA**, fed by `L2HCLK`,
+the **fabric entry**, because the chipdb's network input is unconnected
+(evidence/hclk-route-gap.txt).  In the open build `hclk5` fails dedicated routing
+at all four of its sinks with 2.759 ns of skew on a 2.6936 ns bit period.
+
+**And it answers the question that prompted it**: an open-built Phosphor would
+very likely lose HDMI the same way.  The mechanism is the flow's treatment of a
+371.25 MHz clock on its way to the serialisers, and it would apply to any design
+that flow places -- Phosphor only works today because Gowin placed it.
+
+## What follows
+
+The project's remaining gap is now precise and correctly aimed: **the open flow
+cannot route the TMDS bit clock to the serialisers**, and the fix is the chipdb's
+clock network -- the modelling work of entries 64 to 66 -- and not the design,
+the seating, the cable, the monitor, the firmware or the capture path, each of
+which is now excluded by experiment.
+
+## Limits
+
+One Gowin build against one open build of the same RTL.  "The flow" is isolated
+as a whole: the Gowin build differs in **synthesis and place-and-route** both, so
+this does not say which of the two steps decides it -- though the routing evidence
+points at place-and-route, since the bit clock's bind is a placement outcome.  The
+captures are two seconds each, and the frames are classified by chroma rather than
+read as pictures; the PNGs at `/tmp/C_gowin-same-RTL-frame30.png` and
+`/tmp/B_desktop-frame0.png` are the visual check.
