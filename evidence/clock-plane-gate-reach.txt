@@ -1,0 +1,89 @@
+# Clock-gate reach: 48 sites, two of them die-wide, and a discrepancy with the router
+
+Cycle 2026-10-09, from the lead in `evidence/clock-fabric-fallback-origin.txt`.
+Base: Tang-Build `8577e04`, chipdb `57a1c2a5...`. **No model or design change** —
+this cycle measures a question, and the measurement did not answer it cleanly.
+
+## The question
+
+`nextpnr/himbaechel/uarch/gowin/globals.cc` (~L762-805) is where a clock's fate
+is decided for the BUFG path: a buffer sits on one logic-to-clock gate, "a gate
+reaches only part of the clock plane", and when no gate reaches both the net's
+source and its loads nextpnr gives up with `no clock gate reaches both its source
+and its loads`. It does not stop at the first gate — it walks every BUFG bel.
+So the question is whether the model has a gate that *could* cover the span.
+
+## Method, and its honesty budget
+
+`tools/clock-plane-reach.py` (new) builds the plane graph from the chipdb alone:
+pips (`rc.clock_pips[dest] = {srcs}`, which connect wires inside one tile) and
+nodes (`dev.nodes[name] = (type, {(row, col, wire), ...})`, which group the same
+net across tiles). Reachability is a BFS over `(row, col, wire)`. It is a model
+of the *model*: it applies none of nextpnr's filters (`global_pip_filter`,
+`clock_gate_wire_filter`, `segment_wire_filter`, `dcs_input_filter`).
+
+## Result
+
+48 clock-gate sites. The reach splits sharply:
+
+- **16 sites reach ~19,620 of the 19,621 tiles — the whole die.** They do it
+  through exactly **two wires**, `CLK1` (12 sites) and `CLK2` (4 sites).
+- **32 sites reach only their own tile** (1 tile each) — including most of the
+  central-column sites and most of the `(row, 181)` edge sites on one wire or
+  the other.
+
+```
+gate (row= 26 col=181) BUFG wire=CLK1  reach: 19621 tiles  X 0..181 Y 0..108
+gate (row= 27 col= 90) BUFG wire=CLK1  reach: 19621 tiles  X 0..180 Y 0..108
+gate (row= 17 col=  0) BUFG wire=CLK1  reach:     1 tile   (its own)
+gate (row= 17 col=181) BUFG wire=CLK2  reach:     1 tile   (its own)
+```
+
+Note the pairing: at `(17,0)` it is `CLK2` that spans 19,620 tiles and `CLK1`
+that does not; at `(26,181)` the other way round. Which of a site's two clock
+wires is the wide one is per-site, not uniform.
+
+## The discrepancy, stated plainly
+
+By this measurement, **16 gates reach both the source `(27,177)` and the load
+region** `X118..179, Y41..85`, so the answer to the question would be "yes, a
+gate could cover it". **nextpnr says the opposite**, in every log: no gate
+reaches both. Both cannot be right.
+
+Either the BFS is too permissive — it ignores nextpnr's four pip filters, and
+any one of them could cut the path the wide gates appear to have — or the
+binding rule in `globals.cc` is doing it:
+
+```cpp
+// A gate wire is a node shared with the central bridge, so two buffer bels can
+// name one wire, and a wire another net has already taken is not a candidate at all.
+if (alt == WireId() || ctx->getBoundWireNet(alt) != nullptr) continue;
+```
+
+That rule plus the result above is a real lead: if only two wires (`CLK1`, `CLK2`)
+are die-wide, and the desktop core has several clocks that each want one — the
+placement clock, the pixel clock, the main clock, plus `hclk5` and `clk27` — then
+the first net to bind the wide wire takes it and the rest fall back *by
+contention*, not by absence. It would also explain why `keyboard_link.clk`
+routes dedicated while `clk` does not, and why moving the PLL site changed
+nothing.
+
+That is a hypothesis, not a result. It is not established this cycle.
+
+## What this cycle does NOT claim
+
+- It does not claim the model is fine or broken. It claims the two accounts
+  disagree, and localises the disagreement to nextpnr's filters or its
+  wire-binding rule — not to the node/pip graph.
+- It does not claim a fix. No model, script or design file was changed.
+- The wide/narrow split, and the two-wire observation, are facts about the
+  chipdb as it stands; the *interpretation* is open.
+
+## Next
+
+Close the discrepancy before drawing anything from it: either re-run the BFS
+with nextpnr's own filters applied, or — cheaper and more direct — read a routed
+build's netlist and see which gate wire each clock actually bound, and whether
+`CLK1`/`CLK2` are consumed by the clocks that did route. If contention is the
+mechanism, the design-level answer is fewer clocks wanting a die-wide wire, not
+more model.

@@ -1571,3 +1571,34 @@ Aim the next attempt at the half-boundary span rather than at a die-wide clock n
 - User Test: N/A
 
 ---
+
+## 51 COMMIT Unreleased 2026-10-09T21:38:26-07:00
+
+#### Coming From:
+
+Unreleased 8577e04
+
+#### Purpose:
+
+Measure how far each clock gate of the GW5AST-138C model reaches, to decide whether a gate could cover both the main clock's source and its loads.
+
+#### Outcome:
+
+The lead recorded in the previous cycle was that `nextpnr/himbaechel/uarch/gowin/globals.cc` decides a clock's fate by walking every clock-buffer bel until one gate reaches both the net's source and its loads, and the measurement of that reach does not agree with the router. The new `tools/clock-plane-reach.py` builds the plane graph from the chipdb alone, using pips for connections inside a tile and nodes for the same net across tiles, and finds 48 clock-gate sites split sharply: 16 reach about 19,620 of the 19,621 tiles, the whole die, and do so through exactly two wires, `CLK1` at twelve sites and `CLK2` at four; the other 32 reach only their own tile, and which of a site's two clock wires is the wide one is per-site rather than uniform, so at `(17,0)` it is `CLK2` that spans and at `(26,181)` it is `CLK1`. Against that, nextpnr reports `no clock gate reaches both its source and its loads` in every log, so the two accounts cannot both be right: either the BFS is more permissive than nextpnr because it applies none of its four pip filters, or the binding rule in `globals.cc`, which skips any gate wire another net has already taken, is doing the work. That second reading is a real lead, because if only `CLK1` and `CLK2` are die-wide and the desktop core has several clocks wanting one, the first net to bind the wide wire takes it and the rest fall back by contention rather than by absence, which would also explain why `keyboard_link.clk` routes dedicated while `clk` does not and why moving the PLL site changed nothing; it is a hypothesis, not a result, and nothing in this cycle establishes it. No model, script or design file was changed, so this is a measurement cycle and every status is not applicable. `evidence/clock-plane-gate-reach.txt` records the method, the split, the discrepancy and the limits. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 51 of the active log and a count within the 100-entry limit. No FPGA RTL, firmware or third-party source was changed, and the apicula fork and its chipdb were read, not modified.
+
+#### Next Steps:
+
+Close the discrepancy before drawing anything from it, since the model's reach and the router's verdict cannot both stand: either re-run the reachability BFS with nextpnr's own pip filters applied, or, more directly, read a routed netlist and see which gate wire each clock actually bound and whether `CLK1` and `CLK2` are consumed by the clocks that did route. If contention for the two die-wide wires is the mechanism, the design-level answer is fewer clocks wanting a die-wide wire rather than more model, and that would be a change to propose to the user rather than to make. Do not repeat the spanning/bridge, all-dedicated, BUFG-insertion or PLL-site attempts, and do not treat any offline pass as hardware acceptance. The board remains on the restored baseline; the VGA vertical-line defect, the HDMI HCLK failure, the uncommitted TinyTang socket-retry fix and the deferred desktop patch consolidation remain open.
+
+#### Files Modified:
+
+- tools/clock-plane-reach.py
+- evidence/clock-plane-gate-reach.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---
