@@ -1,0 +1,92 @@
+# The chipdb's skipped inter-HCLK bridge cells do NOT cause the 943 clock fallbacks
+
+Tested 2026-10-09. Base: Tang-Build `071f7ca`, apicula fork `4281068`, chipdb
+`57a1c2a5...` (850,124 bytes), nextpnr `7ed099ec`, runtime arch `959b6ba5...`.
+Result: NEGATIVE. The change is reverted; the toolchain is byte-identical to
+where it started.
+
+## Why this was tried
+
+`tools/chipdb-hclk-gaps.py` measures the HCLK pips and finds 236 wire names
+that are consumed but never driven. Reading `apycula/chipdb.py` turned up two
+things that looked like the cause.
+
+**1. The inter-HCLK branch is dead code.** In `gw5_make_hclk_pips`, the pip
+that would join two HCLK blocks sits at line 1540 as
+
+```python
+if srcid < hclk_off:
+    if srcid in range(104, 108):      # CLKDIV outputs
+        ...
+    elif srcid in {84, 85}:
+        ...
+    elif destid < hclk_off:
+        ...
+    elif srcid in range(hclk_off, hclk_off + 4 * ihclk_wire_num) and ...:
+        src = wnames.hclknames[srcid + 5 * hclk_off]
+        dest = wnames.hclknames[destid + 5 * hclk_off]
+        mk_hclk_pip('_IHCLK', row, col, src, dest, fuses)
+```
+
+The last `elif` is at the same indent as the inner chain, so it lives **inside**
+`if srcid < hclk_off:`. Its condition `srcid in range(hclk_off, ...)` with the
+outer `srcid < hclk_off` is unsatisfiable. That branch can never run, so no
+inter-HCLK pip is created for any cell.
+
+**2. The five bridge cells are skipped.** The walk is guarded by
+`if hclk_idx >= 0:`, and `gw5_hclk_idx` returns `-1` for the five inter-HCLK
+bridge cells `(63,0) (63,181) (108,0) (108,118) (108,181)`. The six measured
+block cells are `(27,0) (27,181) (81,0) (81,181) (108,64) (108,117)`. A comment
+beside `gw5_hclk_idx` claims leaving the bridges at `-1` "loses nothing"
+because "the walk's intra-HCLK branches never touch" their inter-HCLK wires --
+which is true only if the inter-HCLK branch above is alive, and it is not.
+
+## The experiment
+
+Both were changed in the fork, then the whole chain was regenerated and
+measured. The arch is a runtime `.bin`, so no nextpnr rebuild was needed.
+
+| stage | chipdb | wires | tiles | spanning | undriven | `clk` fallbacks |
+|---|---|---|---|---|---|---|
+| baseline | `57a1c2a5` | 876 | 171 | 132 | 236 | 943 |
+| dead branch fixed | `6024616c` | 940 | 171 | **132** | 252 | **943** |
+| + bridge cells admitted | `9ed2b1b9` | 1000 | 176 | **132** | 272 | (not run) |
+
+The middle row was taken all the way through place-and-route: the router's log
+reads `948 warnings, 0 errors`, the `clk` fabric fallbacks are **943**, and
+`tools/clock-route-inventory.py` returns exactly the baseline inventory
+(`clk` fabric 943, `hclk5` fabric 4, `clk27` fabric 1, `desktop_sockets.pixel_clk`
+global-resources-only). The third row was not routed because the spanning count
+had not moved and the second row had already shown the spanning count to be a
+reliable predictor.
+
+## Conclusion
+
+The changes add pips, but every new pip is confined to a tile that already had
+that wire. **No new wire name spans two tiles -- spanning stays at exactly 132
+-- so no new path between tiles appears, and the router routes precisely as
+before.** The skipped bridge cells and the dead inter-HCLK branch are therefore
+not the cause of the 943 fallbacks, and the "loses nothing" comment, whatever
+its reasoning, is not the bug either.
+
+What this rules out is a whole family of next attempts: adding more HCLK pips
+*inside* the cells the model already has will not help. The failure needs a wire
+that carries a clock from one tile to another, and the model has exactly 132 of
+those no matter how many intra-tile pips are added.
+
+## State
+
+The apicula fork is byte-identical to `4281068`; the chipdb is back to
+`57a1c2a5...`, 850,124 bytes; the runtime `chipdb-GW5AST-138C.bin` is back to
+`959b6ba5...`. Backups of the experimental artifacts are under `/tmp` only and
+are not needed. Nothing was pushed to the fork.
+
+## Limits
+
+- `spanning` is a *necessary* condition for a cross-tile route, not a
+  sufficient one, so its being frozen at 132 does not by itself prove the router
+  could not use the new pips; the routed log is what proves that, and it was
+  taken for the first change.
+- The bridge-cell coordinates are the ones named in the source comment, not
+  independently re-measured from the vendor `.fse`.
+- No hardware was loaded with either experimental architecture.

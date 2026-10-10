@@ -1478,3 +1478,33 @@ Restore the board before any hardware test, since the card still carries `3f8704
 - User Test: NOT RUN
 
 ---
+
+## 48 COMMIT Unreleased 2026-10-09T21:20:57-07:00
+
+#### Coming From:
+
+Unreleased 071f7ca
+
+#### Purpose:
+
+Restore the non-booting board to the preserved baseline and test whether the chipdb's skipped inter-HCLK bridge cells are what keep the desktop core's clocks off the dedicated network.
+
+#### Outcome:
+
+The user attached the Tang and directed both the restore and the first modelling experiment. The card's boot path loads `/cores/console138k/desktop.bin`, which held the non-booting DCS build (`3f8704bb...`), so it was replaced over the console with `tools/tinytang_put.py` from the preserved baseline: `desktop.bin` from `7b95d942925497e9a63267ae5d979dca3eb5e4367bc08c68a5a64bbdcb0f077b` (4,492,268 bytes) and `desktop.fs` from `84915457d3dcab4103d2d8f441ad351af639cd96beb993c6b3841d00cc9c8f56` (35,962,597 bytes), each acknowledged by `tangput` and confirmed by size in the card listing, and after the user's power cycle the restored core answered three times out of three as `core 84 answering on UART1 at 2000000 baud`, so the board is back on the baseline. The modelling work then established that the model can be changed and measured without rebuilding nextpnr, because the architecture is a runtime `.bin`: regenerating the chain reproduced the recorded hashes exactly, chipdb `57a1c2a5...` to `.bba` `4293aa93...` to `.bin` `959b6ba5...`, so a chipdb edit is testable in about two minutes offline. Reading `gw5_make_hclk_pips` found two candidate defects: the inter-HCLK pip branch is dead code, because its `elif srcid in range(hclk_off, ...)` sits inside the `if srcid < hclk_off:` that contradicts it, and the five inter-HCLK bridge cells are skipped because `gw5_hclk_idx` returns -1 for them while the comment beside it claims that loses nothing. Both were changed in the fork and measured. Fixing the dead branch alone took the chipdb to `6024616c...`, and the routed log still read `948 warnings, 0 errors` with the same 943 `clk` fabric fallbacks and an inventory identical to the baseline; admitting the bridge cells took it to `9ed2b1b9...` and moved the wire count from 876 to 1000 and the tile count from 171 to 176 but left the spanning-wire count at exactly 132, so no new cross-tile connectivity appeared. The changes add pips only inside tiles that already carried those wires, which is why the router's behaviour is unchanged, and the hypothesis is refuted: adding intra-tile HCLK pips cannot help, because the model's count of wires that span two tiles is what bounds a route and it did not move. The fork, the regenerated chipdb and the runtime `.bin` were then restored byte-for-byte to `4281068`, `57a1c2a5...` and `959b6ba5...`, and nothing was pushed to the fork. `evidence/hclk-bridge-experiment.txt` records the measurements, the reverted change and the limits. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 48 of the active log and a count within the 100-entry limit. No FPGA RTL or firmware was changed, and the only third-party edit was transient and is fully reverted.
+
+#### Next Steps:
+
+The next modelling attempt must create a wire that actually spans two tiles, because a frozen spanning count of 132 is exactly what made both changes inert; the evidence to follow is `evidence/hclk-route-gap.txt`, which locates the divider's input mux whose feed wires (`HCLK_UNK571` and `581`) are confined to tile `(81,181)`, and the router's own failing route `X1Y81/MPLLCLKOUT0 -> X181Y81/CLKDIV_I33`. Take the routed inventory as the acceptance measure before trusting the spanning proxy again, since the proxy has now agreed with the router once and disagreed with it zero times, and do not repeat the bridge-cell or dead-branch changes. The user should report the restored board's display before the next hardware cycle; the VGA vertical-line defect, the HDMI HCLK failure, the uncommitted TinyTang socket-retry fix and the deferred desktop patch consolidation remain open; and any further fork change should be reverted unless the routed inventory improves.
+
+#### Files Modified:
+
+- evidence/hclk-bridge-experiment.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: NOT RUN
+
+---
