@@ -1,0 +1,140 @@
+Admitting the inter-HCLK rows: two real defects, one gate pass, and no route change
+
+Cycle 2026-10-10. Base: Tang-Build `def409f`, apicula fork `4281068`, chipdb
+`57a1c2a5...`.  **No repository was modified.**  Every database and architecture
+below was built in `/tmp` from copies.  The fork is clean and its chipdb
+byte-identical at the end of the cycle.
+
+This cycle set out to measure what drives the HCLK block's clock entry, so the
+model can be given a dedicated path from the PLL to the TMDS serialisers.  It
+found two real defects in the generator, closed one cheap candidate by
+measurement, produced one gate pass that turned out to be an artifact, and ends
+with the entry wire shown to be absent from every vendor table.
+
+## 1. Two controls, both exact
+
+The database rebuild was already controlled last cycle.  This cycle added the
+second half, because a model change is only testable if the architecture that
+nextpnr loads can be rebuilt and compared:
+
+    chipdb rebuild (fork source, unmodified) -> 57a1c2a5..., 850,124 B   [exact]
+
+    gowin_arch_gen.py -> .bba -> bbasm -l -> .bin
+      control  93,487,534 B .bba -> 34,221,966 B .bin
+               the .bba size matches the recorded chipdb-lanefix.bba exactly
+      patched  93,909,589 B .bba -> 34,323,790 B .bin   ("3182 unique tile
+               routing shapes" against the control's 3143)
+
+and nextpnr takes the architecture at run time, so `--chipdb <file>` tests a
+model change without rebuilding the binary.  Routing the verifytree netlist with
+the control architecture reproduces the recorded baseline exactly:
+
+    control   hclk5 4   clk 1199   total 1204
+    recorded  hclk5 4   clk 1199   total 1204
+
+## 2. The generator has two real defects
+
+(a) **The inter-HCLK branch is unreachable.**  In `gw5_make_hclk_pips` the
+branch that builds the inter-HCLK pips tests `srcid in range(hclk_off, ...)` but
+is nested inside `if srcid < hclk_off:`, so it can never fire.  Confirmed by
+reading the source with indentation made explicit and by parsing the function
+with `ast` and dumping the if/elif chain.
+
+(b) **The five inter-HCLK bridge cells are never walked** -- `(63,0) (63,181)
+(108,0) (108,118) (108,181)` -- because `gw5_hclk_idx` returns -1 for them, even
+though the vendor's own data gives each of them eight table-48 rows, all
+inter-HCLK.
+
+## 3. Test A -- the intended naming: no help at all
+
+Branch dedented and bridges admitted, naming the rows `hclknames[srcid + 5 *
+hclk_off]`, which is what the branch was written to do:
+
+    chipdb 9ed2b1b9..., 850,964 B
+    spanning 132 -> 132   UNDRIVEN 236 -> 272   dead-end 316 -> 404
+    tile graph 1 component -> 6, sizes [171, 1, 1, 1, 1, 1]
+
+The gate's rule fails, and the five bridges are isolated islands: under this
+naming their endpoints are consumed by nothing else.  Closed.
+
+## 4. Test B -- the vendor's own ids: the gate passes, the route does not change
+
+The same change with the rows named by their own ids instead of the `+5 *
+hclk_off` band:
+
+    chipdb ae94f0ff..., 851,096 B
+    spanning 132 -> 178      <-- the gate's rule (>132) is satisfied
+    tile graph 1 component, sizes [176]
+
+That is the first time any attempt has raised `spanning`.  So the architecture
+was built from it and the same netlist routed, which is the test that matters:
+
+    control + gate-passing architecture:
+      hclk5 4    clk 1199   total 1204     (identical, run after run)
+    baseline recorded in the tree:
+      hclk5 4    clk 1199   total 1204
+
+**The route is untouched.**  The spanning rise is an artifact of aliasing, and
+the mechanism is visible: `hclknames` is banded by block at a stride of 187, so
+naming an inter-HCLK row's endpoint `hclknames[195]` makes it the *same wire* as
+block 1's local 8.  The inter-HCLK rows at the bridge do carry block-1-band ids
+(`187..194 -> 195..198`), so they join block 1's own wires -- a real graph
+connection with no counterpart on the die.  The `+ 5 * hclk_off` naming exists to
+prevent exactly this collision, and the wiring table was extended to 1274 for
+it.
+
+The lesson is worth more than the attempt: **spanning is a necessary condition,
+not a sufficient one, and it can be raised by a naming accident.  The routing
+run is the acceptance test.**  `tools/chipdb-hclk-gaps.py` says so in its own
+output; this is the first cycle to demonstrate it.
+
+## 5. The block's entry wire is in no vendor table
+
+The question the cycle was really asking is what drives the block that serves
+this design -- `(81,181)`, two TMDS serialisers and the divider.  Every tile
+type in the vendor's `.fse` was scanned, in both tables that could carry it:
+
+- **table 48** (HCLK).  The only cross-band rows anywhere on the die are at one
+  tile type, and they drive **block 1's** locals 8-11 from ids `187..194` -- they
+  are the bridge rows of section 4, and they do not touch block 3.
+- **table 38** (clock mux).  Its low-id rows are clock-network rows, not block
+  entries: `clknames[8]` is `SPINE8`, `clknames[16]` is `SPINE16`, and
+  `clknames[81]` is `TLPLL0CLK0`.  A row `81 -> 8` at the central bridge is
+  **PLL clock -> SPINE**, the ordinary clock-network entry, and the shared id
+  numbering with block 0's locals is a collision and not a connection.
+
+So **no row in either table drives block 3's entry locals**.  Its driver is a
+fuse-less default or an edge from a structure these tables do not describe --
+which is what the model's own hand-written "default PIPs" block stands in for,
+and what the model's comment says the vendor's tables do not include.
+
+## 6. What this means for the next instrument
+
+- A fuse cannot show a fuse-less connection, so **neither the perturbation
+  oracle nor any decode of a bitstream can recover this edge.**  The instrument
+  the last four cycles costed is not the one that can answer this.
+- A model-side forced distribution has already been tried in this project:
+  `tools/desktop-clock-distribution.py` forces the PLL clock onto the modelled
+  network through a static DCS, it **made the clock route in the model**, and
+  the bitstream it produced **did not boot on hardware** (2026-10-09, which is
+  why it is off by default).  That is the same shape as "join the entry to a
+  chosen source and let the router judge", and it failed on the board rather
+  than in the model.
+- What is left is a measurement of the die's own behaviour rather than of its
+  fuses: a placed-and-routed design whose entry path is exercised, observed on
+  silicon, or a structural inference that is validated by a booting bitstream
+  rather than by a routing report.
+
+## Limits
+
+- Model, database and architecture level only.  No board action, no load, and no
+  bitstream was produced.
+- The routing runs used one netlist (the verifytree build of
+  `desktop.90d3fa3a84fa.bin`) and reproduced the recorded baseline exactly, so
+  the null result is attributable to the architecture and not to the run.
+- "No row drives block 3's entry" is a statement about every tile type present
+  in this device's `.fse`, in tables 38 and 48.  It is not a statement about the
+  die.
+- The two defects in section 2 are real and remain unfixed in the fork: this
+  cycle changed nothing outside `/tmp`, deliberately, so the finding is recorded
+  before anything is built on it.
