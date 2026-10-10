@@ -1695,3 +1695,34 @@ Generate a set of candidate placements in parallel, stamp each, and have the use
 - User Test: NOT RUN
 
 ---
+
+## 55 COMMIT Unreleased 2026-10-10T08:09:50-07:00
+
+#### Coming From:
+
+Unreleased 4905a20
+
+#### Purpose:
+
+Test the candidate causes of the VGA vertical lines on the board, and establish what the one build that renders perfectly can and cannot share with the build that does not.
+
+#### Outcome:
+
+Seven probes were run against the display and all seven candidate causes are closed, leaving a timing knife-edge as the explanation. The known-good reference is confirmed real: `evidence/desktop-open.bin` at `fadd00bab669a4a1c3a5d2e9029fb48823cff50bc8adf38d032f4ff6caab069d`, the artefact recorded as visually good but unstable-sync, renders TinyDesk perfectly in both console and desktop mode on the user's Dell E772c -- the same text-and-glyph desktop that shows the lines today, on the same monitor, at the same mode -- which also refutes the mode, since both builds report H 44.9 kHz and V 59.9 Hz. Every subsequent probe breaks the timing-clean state and every build with hold violations produces a dead display: seed 59 has one violation and was dead, the vendor PLL site `PLL_B[1]` at X32Y108 has five and was dead, reverting `desktop_pmod.sv` to its pre-`16b49b3` combinational form has ten and was dead, the PLL sites unpinned has six and was not loaded, and removing the OLED terminal from `desktop_pmod` has six and was refused by gate 2b, while an eight-seed sweep found zero violations only at seed 23, which is the lined baseline. The OLED probe is the sharpest negative: removing its 640-odd lines from the pixel-clock domain made timing worse, so its presence is not what broke the VGA. Two candidate causes are withdrawn with reasons rather than left standing: the `16b49b3` output phase cannot be isolated this way because reverting it changes the netlist and the placer re-runs, and clock skew cannot be the lines' cause because the pixel clock's routed skew is 0.209 ns in every build, pinned or unpinned, clean or violating, while the vendor site carries more `clk` skew at 5.606 ns than the baseline's 4.389 and is the placement the user remembers as good. What remains is the project's long-standing root cause: `clk` rides general fabric with 4.389 ns of skew, 33% of a pixel period, because the chipdb's clock network is not modelled, and the design has grown by about 878 lines since the build that renders perfectly, adding the OLED terminal, a rewritten `desktop_regs.sv` and the pmod timing change, so the fabric-clocked paths no longer tolerate it. The lines are therefore a symptom of a clock that is not where it should be, and the knife-edge explains why every earlier round circled: there is no placement to find, only dead or lined. Three tools came out of the session: `tools/clock-skew-report.py` measures the real routed skew of every clock net, which `tools/pnr-timing.py` cannot show for a passing build, and it is what refuted the skew theory; `tools/sweep-desktop-bins.sh` builds, packs, converts and content-stamps a batch of placement candidates so a candidate that reaches the screen can be identified; and `scripts/build-desktop-core.sh` now stamps every build with its own content hash and emits the binary, because `fadd00ba` had no recorded provenance and cost a cycle in a failed reconstruction. `evidence/vga-lines-knife-edge.txt` records the probes, the withdrawals and the limits, including that the pre-commit and unpinned probes re-placed the design so their counts are placement results rather than clean isolations, that the violations-imply-dead claim rests on four observations rather than a mechanism, and that a high-skew build has never produced a visible picture, so the skew theory of the lines is untested rather than refuted. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 55 of the active log and a count within the 100-entry limit. No FPGA RTL was committed: the `desktop_pmod.sv` variants used for the probes were made in the scratch build tree and the tree has been restored, and no third-party source was changed.
+
+#### Next Steps:
+
+Model the HCLK interconnect in apicula's chipdb from the vendor's `.dat` and `.fse` files, because it is the project's long-standing root cause, the only fix that is not a workaround, and what would give both the main clock and the TMDS bit clock a dedicated route; the acceptance measure already exists as the count of `Failed to route net 'clk'` falling from 943 and `tools/clock-route-inventory.py` reporting clocks on the dedicated network. Do not repeat the mode, PLL-site, output-phase, OLED, spanning-pip, all-dedicated, BUFG-insertion or contention probes, and do not sweep placements expecting a clean one, since the evidence is that none exists. The board is on the bootable baseline; the perfect reference remains on the card as `desktop-oldgood-test.bin`; the HDMI HCLK failure, the uncommitted TinyTang socket-retry fix and the deferred desktop patch consolidation remain open.
+
+#### Files Modified:
+
+- tools/sweep-desktop-bins.sh
+- evidence/vga-lines-knife-edge.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

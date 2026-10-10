@@ -1,0 +1,98 @@
+# The VGA lines: seven probes, and the design sits on a timing knife-edge
+
+Cycle 2026-10-10 (second board session of the day). Base: Tang-Build `4905a20`.
+Board attached; the user ran the display tests and I drove the loads.
+
+This cycle set out to find which *change* put the vertical lines on the VGA. It
+tested seven candidates on the board and closed all seven. What it found instead
+is that the design has no timing margin, and that the lines are the price of the
+one placement that has any.
+
+## The known-good reference is real
+
+`evidence/desktop-open.bin` (`fadd00ba...`, 4,463,286 B) renders **TinyDesk
+perfectly** in both console and desktop mode on the user's Dell E772c — the same
+text-and-glyph desktop that shows the lines today, on the same CRT, at the same
+mode. So the glyph path is not the fault, and neither is the monitor.
+
+## The seven probes
+
+Every build below is the current design; only the named thing differs. Violation
+counts are from `tools/pnr-timing.py`; the outcome is what the user saw.
+
+| probe | hold violations | display |
+|---|---|---|
+| baseline: seed 23, `pll_nes` pinned `PLL_R[0]` | **0** | boots, **lined** |
+| seed 59 | 1 | **dead** |
+| vendor PLL site `PLL_B[1]` (X32Y108) | 5 | **dead** |
+| `desktop_pmod.sv` reverted pre-`16b49b3` | 10 | **dead** |
+| PLL sites unpinned (placer's choice) | 6 | not loaded |
+| OLED terminal removed from `desktop_pmod` | 6 | not packed (2b refused) |
+| eight-seed sweep (7,11,13,17,19,23,29,31) | 0 only at seed 23 | — |
+
+**Every change breaks the timing-clean state.** Placement, netlist and design all
+tip it into hold violations, and every build with violations gives a dead
+display. The only configuration that reaches zero violations is the baseline —
+and that is the lined one.
+
+## What is not the cause (each tested, each closed)
+
+- **The mode.** The monitor reports H 44.9 kHz / V 59.9 Hz for *both* the perfect
+  and the lined build. Identical.
+- **The PLL site.** Reverting to the vendor's own site kills the display.
+- **The output phase.** Reverting `16b49b3`'s registered `visible` changed the
+  netlist, so the placer re-ran and landed on 10 violations — the comparison is
+  confounded and does not isolate the phase. Withdrawn as a suspect, not proven
+  either way.
+- **The OLED terminal.** Removing it makes timing *worse* (0 -> 6 violations).
+- **Clock skew as the lines' cause.** The pixel clock's routed skew is **0.209 ns
+  in every build**, pinned or unpinned, clean or violating — it is simply not
+  placement-sensitive. The vendor site carries *more* `clk` skew (5.606 ns vs
+  4.389) and is the site the user remembers as good.
+- **Gate contention and gate reach** (previous cycles), and the spanning-pip and
+  BUFG-insertion attempts before them.
+
+## What this means
+
+`clk` rides **general fabric** with **4.389 ns of skew** — 33% of a pixel period
+— because the chipdb's clock network is not modelled. That is the same gap that
+keeps the TMDS bit clock off the dedicated network and kills HDMI. The desktop
+design has grown since the build that renders perfectly: **`fpga/desktop` gained
+~878 lines** (the OLED terminal as new files, a rewritten `desktop_regs.sv`, and
+the pmod timing change), and the fabric-clocked paths no longer tolerate the
+skew. The good build was smaller and got away with it.
+
+So the lines are a **symptom of a clock that is not where it should be**, and the
+knife-edge is why every previous round circled: there is no placement to find,
+only dead or lined.
+
+## Measurements and tools added this session
+
+- `tools/clock-skew-report.py` — a post-route hook reporting the *real* routed
+  skew of every clock net. `tools/pnr-timing.py` prints `clk-skew` only inside
+  violation blocks, so a passing build reports 0.000, meaning *unmeasured*.
+- `tools/sweep-desktop-bins.sh` — builds, packs, converts and **content-stamps** a
+  batch of placement candidates, so a candidate that reaches the screen can be
+  identified afterwards.
+- `scripts/build-desktop-core.sh` now stamps every build `desktop.<12-hex-of-its-
+  own-sha256>.bin` / `.fs` and emits the `.bin` at all. This exists because
+  `fadd00ba` had no recorded provenance and cost a cycle to fail to reconstruct.
+
+## Limits
+
+- Quantities in the table are from the runs named; the pre-commit and unpinned
+  probes re-placed the design, so their violation counts are *placement* results,
+  not clean isolations of the change.
+- No build with hold violations was ever seen to produce a picture, so the claim
+  "violations imply a dead display" rests on four observations, not a mechanism.
+- The skew theory of the lines is *untested*, not refuted: no high-skew build has
+  produced a visible picture to compare.
+
+## Next
+
+Model the HCLK interconnect in apicula's chipdb from the vendor's `.dat`/`.fse`.
+It is the project's long-standing root cause, it is the only fix that is not a
+workaround, and it is what would give both the main clock and the TMDS bit clock
+a dedicated route. The acceptance measure is already built: the count of
+`Failed to route net 'clk'` falling from 943, and `tools/clock-route-inventory.py`
+reporting clocks on the dedicated network.
