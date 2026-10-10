@@ -28,6 +28,14 @@ source and loads are somewhere else.
 This is a model of the model, not of the silicon: it says what nextpnr could
 route, and its edges come from the chipdb alone.
 
+**Its reach numbers are known to be wrong and must not be used as they stand.**
+It treats a wire *name* as one net and lets the BFS step between every tile that
+mentions it, but the routed design shows `CLK1`/`CLK2` are **per-tile wires with
+a shared name** -- `clk` alone holds 432 of them at 432 different tiles. That
+made 16 gate sites appear to reach the whole die, which contradicts the router.
+`evidence/clock-wire-dump.txt` records the refutation; the tool is kept for the
+record and for rework, not for its numbers.
+
 SPDX-License-Identifier: MIT
 """
 

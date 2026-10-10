@@ -1,0 +1,73 @@
+# The routed netlist refutes the two-wire contention lead, and my own reach tool
+
+Cycle 2026-10-10. Base: Tang-Build `40dad80`, chipdb `57a1c2a5...`.
+**No model or design change** — this reads the routed design and compares it
+against the measurement in `evidence/clock-plane-gate-reach.txt`.
+
+## What was asked
+
+`globals.cc` binds a gate wire to the first net that takes it ("a wire another
+net has already taken is not a candidate at all"), and the reach measurement
+suggested only two wires were die-wide. If so, the design's several clocks would
+contend for them and the losers would fall back. That was the lead. Reading the
+routed design was the direct way to check it.
+
+## How it was read
+
+`tools/clock-wire-dump.py` (new) is a nextpnr post-route hook. It walks `ctx.nets`
+and, for each clock net, prints every wire it holds (`WireId` stringifies as
+`X#Y#/WIRE`, and the entry's `PipMap.pip` names the hop). It is written to print
+why it cannot read something rather than raise, because a diagnostic must not be
+able to fail the thing it measures. Run as:
+
+```
+NEXTPNR_POST_ROUTE=$PWD/tools/clock-wire-dump.py scripts/build-desktop-core.sh <tree>
+```
+
+## Result: no contention — the clocks share the wires heavily
+
+Count of `X#Y#/CLK1` and `X#Y#/CLK2` wires in each clock's routed tree, and the
+extent of that tree:
+
+| net | wires | `CLK1`+`CLK2` | X range | Y range |
+|---|---|---|---|---|
+| `clk` | 1666 | **432** | 118..179 | 27..85 |
+| `desktop_sockets.pixel_clk` | 930 | **509** | 88..181 | 10..104 |
+| `keyboard_link.clk` | 340 | **191** | 0..180 | 10..108 |
+| `hclk5` | 75 | 2 | 0..181 | 0..102 |
+| `clk27` | 10 | 0 | 0..4 | 45..81 |
+
+Every clock except `clk27` uses `CLK1`/`CLK2` extensively. There is no two-wire
+bottleneck and nothing is being starved by a first taker. **The contention lead
+is refuted**, and with it the reason the reach measurement looked promising.
+
+## And the reach tool was wrong, in exactly the way it warned about
+
+`tools/clock-plane-reach.py` treated the wire *name* `CLK1` as one net and let
+the BFS step between every tile that mentioned it. The routed design shows those
+are **per-tile wires with a shared name**, not one wire: `clk` alone holds 432 of
+them at 432 different tiles. So the "16 gate sites reach the whole die" result
+was an artefact of name-sharing, exactly the over-permissiveness the evidence
+file flagged as the first possible explanation of the disagreement.
+
+That resolves the discrepancy of the previous cycle in favour of the second
+reading's opposite: the reach tool was too permissive, and nextpnr was right.
+The tool is kept for the record but its reach numbers must not be used as they
+stand.
+
+## What this leaves
+
+`clk` **is** on clock wires — 432 `CLK1`/`CLK2` wires, spanning X118..179 and
+Y27..85 — and still nextpnr logs 943 failed dedicated routes for it. So the
+failure is not "the clock cannot reach the plane"; it is a difference between
+what the **dedicated** router requires and what the **ordinary** router then
+provides (`'clk' net was routed but not connected end to end; leaving it to the
+router`). The next question is therefore what `route_clk_net` demands that this
+route does not satisfy — not gate reach, and not gate contention.
+
+## Limits
+
+- One build, one seed (23), one placement. The wire counts are that run's.
+- The dump is a hook over `ctx.nets`; it reports the wires each net *holds*, not
+  the router's internal classification of them.
+- `clk27` on 10 wires is unexamined here.

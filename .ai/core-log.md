@@ -1602,3 +1602,35 @@ Close the discrepancy before drawing anything from it, since the model's reach a
 - User Test: N/A
 
 ---
+
+## 52 COMMIT Unreleased 2026-10-10T06:31:30-07:00
+
+#### Coming From:
+
+Unreleased 40dad80
+
+#### Purpose:
+
+Read the routed netlist to settle whether the design's clocks contend for the two die-wide gate wires, and to resolve the disagreement between the reach measurement and the router.
+
+#### Outcome:
+
+The routed design refutes both the contention lead and the previous cycle's reach measurement. The new `tools/clock-wire-dump.py` post-route hook walks `ctx.nets` and prints every wire each clock net holds, stringifying the WireId as `X#Y#/WIRE` and the hop through the entry's PipMap; counts of `X#Y#/CLK1` and `X#Y#/CLK2` wires are `clk` 432 of 1666 wires spanning X118..179 and Y27..85, `desktop_sockets.pixel_clk` 509 of 930 spanning X88..181, `keyboard_link.clk` 191 of 340, `hclk5` 2 of 75 and `clk27` 0 of 10, so every clock except `clk27` uses the clock wires heavily and nothing is starved by a first taker, which refutes the contention lead outright. The same data shows the reach measurement was wrong in precisely the way its own evidence file flagged as possible: `tools/clock-plane-reach.py` treated the wire name `CLK1` as one net and let the BFS step between every tile mentioning it, where the routed design shows those are per-tile wires sharing a name, 432 of them in `clk` alone, so its "16 gate sites reach the whole die" was an artefact of name-sharing and nextpnr was right. The tool is retained with that refutation written into its docstring rather than deleted, and its reach numbers must not be used. What this leaves is narrower than gate reach and gate contention: `clk` is demonstrably on clock wires across its own extent and nextpnr still logs 943 failed dedicated routes for it, with `'clk' net was routed but not connected end to end; leaving it to the router`, so the difference is between what the dedicated router requires and what the ordinary router then provides. No model, script or design file was changed beyond the new hook and the docstring warning, so no build, deployment or user test applies. `evidence/clock-wire-dump.txt` records the method, the counts, the refutation and the limits. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 52 of the active log and a count within the 100-entry limit. No FPGA RTL, firmware or third-party source was changed, and the apicula fork and its chipdb were read, not modified.
+
+#### Next Steps:
+
+Ask what `route_clk_net` requires that this route does not satisfy, since `clk` already holds 432 clock wires and the problem is the dedicated router's criterion rather than reaching the plane; read the two router entry points in `nextpnr/himbaechel/uarch/gowin/globals.cc` before writing anything against them. Do not reuse `tools/clock-plane-reach.py`'s numbers, and do not repeat the spanning/bridge, all-dedicated, BUFG-insertion, PLL-site or contention attempts. The board remains on the restored baseline; the VGA vertical-line defect, the HDMI HCLK failure, the uncommitted TinyTang socket-retry fix and the deferred desktop patch consolidation remain open.
+
+#### Files Modified:
+
+- tools/clock-wire-dump.py
+- tools/clock-plane-reach.py
+- evidence/clock-wire-dump.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---
