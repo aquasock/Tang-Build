@@ -1878,3 +1878,33 @@ Run the seed-19 discriminator and record which reading it supports, because that
 - User Test: PASS
 
 ---
+
+## 61 COMMIT Unreleased 2026-10-10T10:23:55-07:00
+
+#### Coming From:
+
+Unreleased e19093d
+
+#### Purpose:
+
+Audit `.ai/core-reference.md` against what this session established and record the findings that are facts about the device, the toolchain and the core contract rather than project history.
+
+#### Outcome:
+
+The audit found one record substantively wrong and eight externally defined facts that were missing, and the file now carries them as DEV-010, DEV-011, TOOL-026, TOOL-027, TOOL-028, EXTCTL-006, PROT-010 and BRD-009, with a routing row and an index line each. The wrong record is DEV-008, which stated the device's twelve PLL sites were "PLL_L[0] through PLL_L[5] and PLL_R[0] through PLL_R[5]": that is twelve names but not the twelve sites, and the correct set, read on 2026-10-10 from the fork's own `_gw5a_pll_slots` table and cross-checked against the names this project's builds actually constrain, is PLL_L[0..3], PLL_R[0..3] and PLL_B[0..3]. Per the file's own rule, its statement was not rewritten; DEV-008 is marked SUPERSEDED with `superseded_by: DEV-010`, and DEV-010 carries the row, column and vendor site index of each of the twelve along with the consequence that matters most here, which is that the four PLL_B sites sit on row 108, the row the device's clock network leaves in gaps, so an unpinned PLL the placer puts there is the worst placement available. TOOL-026 records that `INS_LOC` takes a placement macro and that on this device only those twelve PLL names are macros, so a PLL can be pinned and a clock divider cannot -- the divider form is refused as an unknown placement macro -- and that the cell must be written as the flattened name. TOOL-027 records what the SDC reader accepts, that it refuses C++-style comments and has no `set_output_delay`, and that an unconstrained clock silently takes nextpnr's own 12 MHz default, which is the trap behind this flow's primitive-pin constraints. TOOL-028 records that some placements cannot complete the TMDS bit clock's dedicated route at all and that nextpnr fails outright rather than degrading, which makes a seed a correctness variable and not only a timing one. DEV-011 records the measured consequence of the device's missing clock network: the main clock rides fabric at every sink, 943 in the recorded baseline and 1199 once the monitor added 256 flops to that domain, and its routed skew differs between placements that are equally clean, 4.077, 4.389 and 4.657 ns, so skew does not order the display outcome and the largest of the three is not the lined one. EXTCTL-006 records the desktop core's read32 register map and the byte layout of an extended request and its reply, including that the CRC covers the frame's type byte and the first twelve payload bytes and that a read returns in bytes 9 to 12. PROT-010 records that a core's identity over the link is a family constant with no build hash, which is why two builds of this design can be 4,492,268 bytes each and the console cannot tell them apart. BRD-009 records the board's FPGA clocks as measured on silicon, 21.5020 to 21.5053 MHz for the main clock and 74.2496 to 74.2501 MHz for the pixel clock, and that the main clock is the design's own 2000 MHz VCO divided by 93 rather than the 21.492 MHz its constraint names. One candidate finding was deliberately left out: the shell's `set -e` semantics, under which a bare failing command aborts a script before the next line reads `$?`, which is what made `scripts/build-desktop-core.sh`'s clock override unreachable. It is a real trap and it cost this project a build, but it is generic language behaviour rather than a fact about this board, its SDK, its toolchain or its core contracts, so it stays in entry 58 and in the script's own comment instead of becoming a reference record. The file was validated rather than eyeballed as part of the audit: it parses as YAML, holds 166 records and 166 index lines with a one-to-one correspondence, has no duplicate identifiers, and every record has the full key set, a kind and status from the schema's own lists and at least one cited source, with no unresolved `superseded_by`, routing or index reference; `last_reviewed` moved from 2026-10-08 to 2026-10-10. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that this entry and the reference update are the only `.ai` changes, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 61 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Run the seed-19 discriminator in `build/clock-monitor/desktop.aa6b0f9d733b.bin`, because DEV-011 now records that skew does not order the outcome and the discriminator is what separates a threshold that would make placements screenable from a cause nothing here has yet identified; the prediction is that it is lined if a threshold below about 4.2 ns exists and perfect if the cause is elsewhere. Do not re-derive what the reference now carries: the PLL macro names and their rows, the `INS_LOC` macro rule, the SDC reader's limits and default, the fabric failure at some seeds, the read32 map, the absence of a build identity on the link, and the measured clock frequencies are all recorded with sources and need to be cited rather than re-measured. The chipdb lead in `evidence/clock-chipdb-ground-truth.txt` remains the root cause of the 1199 `clk` fabric fallbacks and is unchanged. Whether the monitor image stays the card's boot default is still the user's call, and the TinyTang active-log numbering non-conformance still wants a mechanical renumber.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

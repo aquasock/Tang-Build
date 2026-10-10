@@ -254,7 +254,14 @@ Topic IDs are the `record_id` prefix. An entry reserves a name; it does not clai
 | What memory is on this board? | PSX | PSX-005 |
 | How do I tell whether a core is loaded, and what is a core ID? | PSX | PSX-006 |
 | Which toolchain can place a PLL on this device, and where does its device database come from? | TOOL | TOOL-021, TOOL-024 |
-| How many PLL sites does the device have, what are they called, and what is the cell type? | DEV | DEV-008 |
+| How many PLL sites does the device have, what are they called, and what is the cell type? | DEV | DEV-010 |
+| Can a PLL or a clock divider be pinned to a site, and how is the name written? | TOOL | TOOL-026, DEV-010 |
+| What does nextpnr's SDC reader accept, and what does an unconstrained clock get? | TOOL | TOOL-027 |
+| Why does place-and-route fail outright at some seeds? | TOOL | TOOL-028 |
+| How do I read a register out of a loaded FPGA core? | EXTCTL | EXTCTL-006 |
+| How can a host tell which core, or which build, is loaded? | PROT | PROT-010 |
+| What clock frequencies does this board's FPGA actually run at? | BRD | BRD-009 |
+| How much skew does the main clock carry, and does it explain the VGA lines? | DEV | DEV-011 |
 | What bounds the 138C PLL's operating point, and why was a configuration refused? | DEV | DEV-009 |
 | Why did a synthesised netlist come out with no clock primitives in it? | TOOL | TOOL-017 |
 | Why does a serializer netlist name a Xilinx primitive? | TOOL | TOOL-018 |
@@ -425,7 +432,15 @@ TOOL-022: "a Gowin chipdb is generated from the vendor's .fse/.dat/.tm files, an
 TOOL-023: "a nextpnr built against oss-cad-suite needs PYTHONHOME set or it aborts in its embedded interpreter on a /yosyshq prefix"
 TOOL-024: "the published apicula 0.34 database has no clock data for GW5AST-138C; the fork-generated one has twelve PLL sites and 171 HCLK pips"
 TOOL-025: "the SDG1032X timebase is +/-1 ppm from 18-28 C with a 10 MHz external reference input, and its edges are quantised to 150 MSa/s"
-DEV-008: "GW5AST-138C has twelve PLL sites, PLL_L[0] to PLL_L[5] and PLL_R[0] to PLL_R[5], and the cell type is PLL"
+DEV-008: "Superseded by DEV-010. Recorded GW5AST-138C as having twelve PLL sites named PLL_L[0] to PLL_L[5] and PLL_R[0] to PLL_R[5], which misnamed the set"
+DEV-010: "the twelve PLL macros are PLL_L[0..3] (rows 27/45/63/81), PLL_R[0..3] (the same rows, col 177-178) and PLL_B[0..3] (row 108, cols 28/32/146/150); there is no PLL_L[4..5] or PLL_R[4..5], and the four PLL_B sites are the row-108 clock gaps"
+DEV-011: "the main clock rides general fabric at every sink (943 baseline, 1199 with the monitor) and its routed skew differs between clean placements -- 4.077 ns renders perfectly, 4.389 ns is the lined baseline, 4.657 ns is another clean placement -- so skew does not order the outcome, while the pixel clock is 0.209 ns in all three"
+TOOL-026: "INS_LOC takes a placement macro; on this device only the twelve PLL names are macros, so a PLL can be pinned and a clock divider cannot -- INS_LOC \"div5\" CLKDIV_0 is refused as an unknown placement macro -- and the cell is the flattened name pll_nes.PLL_inst"
+TOOL-027: "nextpnr's SDC reader takes create_clock and set_false_path, has no set_output_delay, refuses // comments, and gives an unconstrained clock its own 12 MHz default, so the board clock and the divider output must be constrained at their primitive pins"
+TOOL-028: "some placements cannot complete the TMDS bit clock route and nextpnr fails rather than degrading -- Net hclk5 has no route to the FCLK of u_hdmi.hdmi.serializer.gwSer0 -- which killed seeds 23 and 29 of one sweep on a netlist that routes at seed 17"
+EXTCTL-006: "the desktop core answers read32 from a fixed map -- 0x00 0x00544453, 0x04 the ABI word, 0x08 capabilities, 0xc0 the socket word, 0x100 the grid, 0x108 a frame count, 0x10c a signature, 0x114 the cursor -- with a 14-byte request whose CRC covers the type byte and the first twelve payload bytes, and a 15-byte reply carrying the register in bytes 9-12; this project adds 0x120-0x130 and 0x134"
+PROT-010: "a core's identity over the link is a family constant -- core id 0x54 for the desktop core and a 21-character config string -- with no build hash, so the console cannot tell two builds apart and this project has two artifacts that are both 4,492,268 bytes"
+BRD-009: "with the desktop core loaded the FPGA main clock measures 21.5020-21.5053 MHz and its pixel clock 74.2496-74.2501 MHz against the board 50 MHz oscillator (itself measuring 50.0036 MHz), steady over four power cycles; the main clock is its PLL 2000 MHz VCO over 93, not the 21.492 MHz its constraint names"
 DEV-009: "the 138C PLL's pump and loop-filter constants are measured over Fpfd 19-50 MHz and FVCO 650-1300 MHz, and a configuration outside that VCO band is refused by the packer"
 PROV-006: "the licence direction set on 2026-10-08 is GPL-3 going forward, with the MIT grants already published left standing"
 ```
@@ -2526,7 +2541,8 @@ PROV-006: "the licence direction set on 2026-10-08 is GPL-3 going forward, with 
   kind: DEVICE
   topic_id: DEV
   title: "GW5AST-138C has twelve PLL sites, and its PLL cell type is PLL"
-  status: VERIFIED
+  status: SUPERSEDED
+  superseded_by: "DEV-010"
   verified_date: 2026-10-08
   statement: "GW5AST-138C exposes twelve PLL sites, addressed by the vendor macro names `PLL_L[0]` through `PLL_L[5]` and `PLL_R[0]` through `PLL_R[5]`, each recorded with its row, column and vendor site index in a table that is specific to this device. The cell type a placeable PLL is created as is `PLL`, not the `PLLA` of the GW5A-25A, and the GW5A-25A carries six such sites where this device carries twelve."
   consequence: "A design that instantiates several PLLs has sites to spare, so placement is not limited by the count, and the primitive name a design and its toolchain must agree on for this device is `PLL`. The hard AE350 block's core clock has no fabric entrance and is reached only from a top PLL's CLKOUT1, which is why a design carrying that block always contains a PLL."
@@ -2562,6 +2578,115 @@ PROV-006: "the licence direction set on 2026-10-08 is GPL-3 going forward, with 
     - "TinyTang LICENSE and THIRD_PARTY.md, which still record MIT"
     - "TinyTang fpga/desktop/, whose files carry SPDX-License-Identifier: GPL-3.0-only"
   verification: "Not yet verifiable in the tree: this is a directive awaiting implementation, and the records it will supersede remain accurate until the licence files change."
+
+- record_id: DEV-010
+  kind: DEVICE
+  topic_id: DEV
+  title: "The twelve PLL macro names are PLL_L[0..3], PLL_R[0..3] and PLL_B[0..3], and the four PLL_B sites are on row 108"
+  status: VERIFIED
+  verified_date: 2026-10-10
+  statement: "GW5AST-138C's twelve PLL sites are addressed by these vendor macro names, each with the row, column and vendor site index the fork's database records: PLL_L[0] (27,1,0), PLL_L[1] (45,0,1), PLL_L[2] (63,0,2), PLL_L[3] (81,1,3), PLL_R[0] (27,177,4), PLL_R[1] (45,178,5), PLL_R[2] (63,178,6), PLL_R[3] (81,177,7), PLL_B[0] (108,28,8), PLL_B[1] (108,32,9), PLL_B[2] (108,146,10) and PLL_B[3] (108,150,11). There is no PLL_L[4], PLL_L[5], PLL_R[4] or PLL_R[5]; the third group is named PLL_B and is not an extension of L and R. The cell type a placeable PLL is created as is PLL."
+  consequence: "Only these twelve names are placement macros, so only they can be given to INS_LOC (TOOL-026). The four PLL_B sites sit on row 108, the row this device's clock network leaves in gaps, so an unpinned PLL the placer puts there is the worst placement on the die: this project measured that configuration as unable to reach a violation-free place-and-route at all, while pinning pll_nes to PLL_R[0] gives clean placements, which is what TinyTang's fpga/desktop/desktop.cst now does. A design that needs a clean placement must pin its PLLs rather than rely on the placer's free choice."
+  sources:
+    - "apicula (this fork) apycula/chipdb.py: `_gw5a_pll_slots`, whose GW5AST-138C entry is annotated as traced one site per vendor oracle run rather than assumed row-major (local checkout /run/media/vash/GIT/apicula-mathieufro, revision 4281068)"
+    - "nextpnr-himbaechel (this fork) himbaechel/uarch/gowin/cst.cc: the INS_LOC placement-macro reader, whose comment gives `INS_LOC \"u_Gowin_PLL_AE350/PLL_inst\" PLL_R[0];` as the vendor's spelling"
+  verification: "Read from the fork's chipdb on 2026-10-10. Cross-checked on the tool side: nextpnr accepted `INS_LOC \"pll_nes.PLL_inst\" PLL_R[0]` and the same form for PLL_B[1], PLL_L[1] and PLL_L[3] in this project's builds, each producing a placed PLL at the named site, and the four row-108 sites are the ones this project's measurements call a clock gap."
+
+- record_id: DEV-011
+  kind: DEVICE
+  topic_id: DEV
+  title: "This device's main clock cannot reach the dedicated clock network, so its routed skew is a property of the placement and does not order the display outcome"
+  status: VERIFIED
+  verified_date: 2026-10-10
+  statement: "Place-and-routing the desktop core, the net driving the design's main clock is routed on general fabric at every one of its sinks -- 943 in the baseline this project recorded and 1199 once its clock monitor added 256 flops to that domain -- and its measured routed skew differs between placements that are equally clean: 4.077 ns on the placement that renders a perfect VGA image, 4.389 ns on the placement recorded for the lined baseline, and 4.657 ns on a second violation-free placement. The pixel clock's routed skew is 0.209 ns in all three and the TMDS bit clock's is 2.758 to 2.759 ns."
+  consequence: "A clean timing report does not bound the main clock's skew, and the skew does not order the display outcome -- the largest of the three is not the lined one -- so no scalar property of this net can screen a placement as good, and clock skew was correctly withdrawn as an explanation for the vertical lines rather than confirmed. What does track the clock's reach is the fabric fallback count, which rises one for one with load added to the domain; scripts/build-desktop-core.sh's topology gate compares that count against a recorded profile and labels a changed build experimental rather than treating it as equivalent."
+  sources:
+    - "this repository, tools/clock-skew-report.py (a nextpnr post-route hook) and tools/clock-route-inventory.py, run on the desktop core's routed netlists"
+    - "TinyTang fpga/desktop/clock_monitor.sv and third_party/patches/desktop/0002-clock-monitor.patch: the 256 clk-domain flops"
+    - "apicula (this fork): the modelled clock network and its gap, TOOL-024"
+  verification: "Measured 2026-10-10 with the post-route hook on three violation-free placements; the raw reports and the four power cycles behind the display claim are in this repository's evidence/clock-monitor.txt, and the figures are also carried by core-log entries 58, 59 and 60."
+
+- record_id: TOOL-026
+  kind: TOOLCHAIN
+  topic_id: TOOL
+  title: "INS_LOC takes a placement macro, and on this device only the PLLs have one"
+  status: VERIFIED
+  verified_date: 2026-10-10
+  statement: "nextpnr-himbaechel's Gowin constraint reader accepts `INS_LOC \"<cell>\" <MACRO>[<n>];`, where the cell is the flattened instance name and MACRO is a placement macro the database defines; for GW5AST-138C the macro set is the twelve PLL names of DEV-010. A name that is not a placement macro is refused with `ERROR: Unknown placement macro <name> in INS_LOC for cell <cell>`, which is what a bel name produces: `INS_LOC \"div5\" CLKDIV_0` and `INS_LOC \"div5\" CLKDIV_2` are both rejected."
+  consequence: "A PLL's site can be constrained and a clock divider's cannot, so a design cannot pin the divider to a particular bel to steer the pixel clock's route; where this project wanted that lever it did not have one. The cell in the constraint is the flattened name nextpnr reports, `pll_nes.PLL_inst`, not the RTL instance name, which is what makes the constraint writable from outside the design."
+  sources:
+    - "nextpnr-himbaechel (this fork) himbaechel/uarch/gowin/cst.cc: the `inslocmacrore` pattern and the comment naming the vendor's placement-macro spelling (local checkout /run/media/vash/GIT/nextpnr-mathieufro)"
+    - "this repository, evidence/desktop-vga-display.txt: the two CLKDIV refusals quoted verbatim, and the note that INS_LOC takes macros and only the PLLs have them"
+  verification: "Read from the fork's source on 2026-10-10 and confirmed in this project's own runs: the PLL form is accepted and places the cell, and the divider form is refused."
+
+- record_id: TOOL-027
+  kind: TOOLCHAIN
+  topic_id: TOOL
+  title: "What nextpnr's SDC reader accepts, and what an unconstrained clock is given"
+  status: VERIFIED
+  verified_date: 2026-10-10
+  statement: "This fork's SDC reader accepts `create_clock` and `set_false_path` and has no `set_output_delay`, and it rejects C++-style `//` comments, so a constraint file that opens with one is refused. A clock no constraint names is not left alone: it takes nextpnr's own 12 MHz default. Names that exist only after elaboration do not resolve either, so the board clock and the divider output have to be constrained at their primitive pins, `pll_27.PLL_inst/CLKIN` and `div5/CLKOUT`, rather than at the RTL net names."
+  consequence: "The flow converts `//` to `#` before handing the file over, and appends the primitive-pin constraints itself; without that the pixel clock and the board clock silently inherit 12 MHz and every timing figure about them is meaningless. A VGA output delay cannot be expressed in this SDC dialect at all, so no claim about the raster's analog quality can come from this model."
+  sources:
+    - "nextpnr-himbaechel (this fork), the SDC reader; and this repository's scripts/pnr-desktop.sh and tools/desktop-clock-constraints.py, which implement the two workarounds"
+    - "this repository, evidence/desktop-vga-stripes.txt: that the parser supports create_clock and set_false_path and not set_output_delay, and the corrected-constraint run whose domains are checked at their real frequencies"
+  verification: "Confirmed 2026-10-10: with the primitive-pin constraints appended the same run checks keyboard_link.clk at 50.00 MHz, desktop_sockets.pixel_clk at 74.25 MHz and clk at 21.49 MHz, where an unconstrained run would have checked them at the 12 MHz default."
+
+- record_id: TOOL-028
+  kind: TOOLCHAIN
+  topic_id: TOOL
+  title: "Some placements cannot complete the TMDS bit clock's dedicated route, and nextpnr fails rather than degrading"
+  status: VERIFIED
+  verified_date: 2026-10-10
+  statement: "Placing and routing the desktop core, the router can leave the 371.25 MHz TMDS bit clock unable to reach the serialiser's fast-clock input and reports that as an error rather than a warning: `ERROR: Net hclk5 has no route to the FCLK of u_hdmi.hdmi.serializer.gwSer0 (sink wire X181Y102/FCLKA): the router left this arc unrouted`, after a run of `Failed to route net 'hclk5' ... using dedicated routing` warnings. The run stops with no routed netlist."
+  consequence: "A placement seed is a correctness variable and not only a timing one: two seeds of a sweep in this project died this way while the same netlist routed at others, so a build that assumes any seed will route fails for reasons that read like a design error. The failure is specific to the bit clock, which only the TMDS serialisers need; the 74.25 MHz pixel domain, registered on a different clock, produced no such error, so this is a fact about reaching FCLKA in particular."
+  sources:
+    - "nextpnr-himbaechel (this fork): the failed-arc report, quoted verbatim from this project's runs"
+    - "this repository, evidence/desktop-vga-display.txt and evidence/hclk-route-gap.txt, and the sweeps in tools/sweep-hclk5-seeds.sh"
+  verification: "Reproduced 2026-10-10 at seeds 23 and 29 on the monitor netlist, and earlier at seeds 1, 3, 4 and 5 on the pre-monitor netlist; the same monitor netlist routes at seed 17."
+
+- record_id: EXTCTL-006
+  kind: PROTOCOL
+  topic_id: EXTCTL
+  title: "The desktop core's read32 register map, and the byte layout of an extended request and its reply"
+  status: VERIFIED
+  verified_date: 2026-10-10
+  statement: "The desktop core's register endpoint answers the 0x10 channel's opcode 1 (read32) from a fixed map: 0x00 returns 0x00544453, 0x04 the ABI word 0x00010001, 0x08 a capability word covering none, OLED and the two VGA components, 0xc0 the socket word, 0x100 0x00180010 for 24 columns by 16 rows, 0x108 a frame count, 0x10c a signature and 0x114 the cursor; opcode 0 returns 0x13, the capability bits for read32, write32 and the validated block write. A request's payload is 14 bytes -- version, opcode, sequence (2), address (4), value (4), CRC (2) -- and the CRC-16 is computed over the frame's type byte and the first twelve payload bytes, not over its own two. The reply is 15 bytes -- version, opcode with bit 7 set, status, sequence (2), address (4), data (4), CRC (2) -- and a read carries the register in bytes 9 to 12, most significant first. This project's clock monitor extends the map with cycle counters at 0x120, 0x124, 0x128, 0x12c and 0x130 and the constant 0x4d4f4e31 at 0x134."
+  consequence: "A host can read any register the core exposes with no new frame type, which is why this project's readback needed a command rather than a protocol change. The word at 0x00 is how a host tells a desktop core from another core, and the constant at 0x134 is how a build carrying the monitor is told from one that is not -- which matters because the 0x01 core id is the same for every build of this core (PROT-010)."
+  sources:
+    - "TinyTang fpga/desktop/desktop_regs.sv: the opcode-1 case, the status values and the 0x12 block length rule"
+    - "TinyTang fpga/desktop/clock_monitor.sv and third_party/patches/desktop/0002-clock-monitor.patch: this project's extension"
+    - "TinyTang ports/bl616/phosphor/fpga_ext_frame.h: `fpga_ext_packet_crc`, CRC-16/CCITT-FALSE over the command byte and the payload"
+  verification: "Confirmed on this project's hardware on 2026-10-10: `fpgar 0` returned 0x00544453, `fpgar 4` 0x00010001, `fpgar 100` 0x00180010 and `fpgar 134` 0x4d4f4e31 with status 0 on the monitor core, while the same address returned the status-4 unknown-address code on a core without it. The CRC implementation reproduces the independently computed 0x7317 of TinyTang tools/tests/fpga_ext_frame_test.cpp."
+
+- record_id: PROT-010
+  kind: PROTOCOL
+  topic_id: PROT
+  title: "A loaded core's identity over the link is a family constant, not a build identity"
+  status: VERIFIED
+  verified_date: 2026-10-10
+  statement: "Command 0x01 returns the single byte the core was built with -- 0x54 for the desktop core, the low byte of the CORE_ID parameter -- and command 0x02 returns a config string that is a compile-time constant of 21 characters for that core. Nothing in the contract carries a build hash, a build date or any value that differs between two bitstreams of the same family, and two different builds of the same design can also be the same length: this project has two artifacts that are each 4,492,268 bytes."
+  consequence: "A loaded core cannot be identified from the board's console, so a build's identity has to be established and recorded on the host at the moment it is built, which is why scripts/build-desktop-core.sh names every artifact after its own content hash. A measurement taken on the board cannot be attributed to a bitstream unless the build carries a marker of its own, which is why the clock monitor answers a constant at one register address instead of relying on the core id."
+  sources:
+    - "TinyTang src/iosys/iosys_bl616.v: the CORE_ID parameter, its value in the desktop patch, and CONF_STR for the 0x02 reply"
+    - "TinyTang ports/bl616/fpga_frames.h: FPGA_RESP_CORE_ID and the reply-frame contract"
+    - "this repository, core-log entry 41, and scripts/build-desktop-core.sh's provenance stamp"
+  verification: "Observed on this board on 2026-10-10: `fpga` answered `core 84` for both the lined baseline and the clock-monitor build, which only the 0x134 register then distinguished; the byte-count collision between two 4,492,268-byte artifacts is recorded in core-log entry 41."
+
+- record_id: BRD-009
+  kind: BOARD
+  topic_id: BRD
+  title: "The FPGA clocks on this board, measured on silicon with the desktop core loaded"
+  status: VERIFIED
+  verified_date: 2026-10-10
+  statement: "With the desktop core running, the design's main clock measures 21.5020 to 21.5053 MHz and its pixel clock 74.2496 to 74.2501 MHz against the board's 50 MHz oscillator, which itself measured 50.0036 MHz over a 10.004 s gate; two counters placed independently for each clock agreed within 0.02 percent, and the figures did not move across four power cycles. The main clock is not the 21.492 MHz its constraint names but about 21.505 MHz, which is the design's own PLL dividing its 2000 MHz VCO by 93."
+  consequence: "The clock frequencies the design intends are the ones silicon produces, so a model that treats this design as marginal on rate is wrong about rate, and the 21.49 MHz constraint is a conservative figure rather than an error to be corrected in the design. The measurement makes the board, not the model, the arbiter of the clock question, and it is available in one shell command while the monitor is in the core."
+  sources:
+    - "the measurement itself: TinyTang fpga/desktop/clock_monitor.sv counting against the crystal, read back by the firmware's fmon command over the two-wire console"
+    - "TinyTang fpga/desktop/desktop.sdc: the 21.49 MHz main-clock and 74.25 MHz pixel constraints"
+    - "nestang src/pll/gowin_pll_nes.v and the desktop core's PLL parameters: the divider selection that makes the VCO 2000 MHz divided by 93"
+  verification: "Measured on this board 2026-10-10 over four power cycles, with the raw counts in this repository's evidence/clock-monitor.txt and the same figures in core-log entries 58 and 60."
+
 ```
 
 ---
@@ -2596,5 +2721,5 @@ PROV-006: "the licence direction set on 2026-10-08 is GPL-3 going forward, with 
 - A `core-syntax.md` audit is required whenever this file changes, per `.ai/core.md`.
 
 ```yaml
-last_reviewed: 2026-10-08
+last_reviewed: 2026-10-10
 ```
