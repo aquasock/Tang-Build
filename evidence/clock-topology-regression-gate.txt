@@ -1,0 +1,105 @@
+# The clock-topology gate is a regression check, not an all-dedicated demand
+
+Cycle 2026-10-09. Base: Tang-Build `6a172b5`. Supersedes the `2c` topology gate
+introduced in entry 47 (`evidence/clock-topology-verification.txt`).
+
+## Why the old bar was wrong
+
+Entry 47's gate `2c` refused to pack unless **every** clock net was on the
+dedicated network. The probe behind this cycle showed that bar cannot be met on
+this device, and not because of a missing pip:
+
+- The fabric PLL bel outputs (`MPLL*CLKOUT*`) exist as `PLL_O` nodes --
+  `MPLL4CLKOUT0` at tile `(27,177)` -- but **no clock pip anywhere on the device
+  is sourced from a PLL output wire.** The clock plane's PLL-class inputs are a
+  different family, `BLPLL0CLK0..3`, at the central bridge `(54,88)/(54,93)`.
+- nextpnr states the consequence itself, in its own log:
+
+```
+Warning: Routing the clk net with the ordinary router: no clock gate reaches
+both its source and its loads.
+```
+
+So the clock plane's gates are quadrant-local, a die-wide clock's source and
+loads are not, and the PLL's route into the plane is the fabric-then-gate path
+the fork's own measured note records. A die-wide clock **cannot** be dedicated
+in this model, and no build on record has all clocks dedicated:
+
+| build | `clk` | `hclk5` | `clk27` | `pixel_clk` |
+|---|---|---|---|---|
+| baseline (boots VGA) | fabric 943 | fabric 4 | fabric 1 | global-only |
+| DCS (did not boot) | dedicated | fabric 4 | fabric 1 | global-only |
+| CLOCK-only (BUFG) | fabric 2829 | fabric 4 | fabric 1 | global-only |
+
+A gate that no build can pass is a wall, and it made every build depend on
+`ALLOW_UNVERIFIED_CLOCK=1` -- which defeats the point of a gate.
+
+## What replaces it
+
+`tools/clock-route-inventory.py` now records a **profile** and compares against
+it:
+
+- `--write-profile OUT.json` records each clock net's binding (`dedicated`,
+  `fallbacks`, `global_only`, `partial`).
+- `--compare PROFILE.json` fails only on **regression**: more fallbacks than the
+  profile, a net that was dedicated and is not, a net newly on global resources
+  only, a net newly only partially connected, or a clock that is not in the
+  profile at all appearing on non-dedicated resources.
+
+The recorded profile is `evidence/desktop-clock-profile.json`, taken from the
+build that reproduces the hardware-proven baseline `.fs` (`84915457...`)
+byte-for-byte. `scripts/build-desktop-core.sh` gate `2c` runs `--compare`,
+prints the whole topology, writes it to `.open-pnr/clock-topology.txt`, and
+stops only on regression. `ALLOW_UNVERIFIED_CLOCK=1` still forces a pack.
+
+## Verified
+
+```
+$ python3 tools/clock-route-inventory.py --compare evidence/desktop-clock-profile.json <log>
+baseline (build/vga-diagnostic/timed/nextpnr.log)  exit 0  no regression
+DCS      (build/vga-regression/nextpnr-dcs.log)    exit 0  no regression ('clk' 943 -> 0)
+CLOCK-only (build/vga-regression/nextpnr-global.log) exit 1
+    clk: fabric fallbacks 943 -> 2829; now only partially connected
+```
+
+And the integrated flow, with **no override set**:
+
+```
+$ bash scripts/build-desktop-core.sh .../reconstruct.jhpQys
+=== 2b. timing gate: setup and hold (seed 23) ===        pass setup=0 hold=0
+=== 2c. clock topology check (vs the recorded profile) ===
+   no clock-topology regression against .../desktop-clock-profile.json
+   desktop.fs  84915457d3dcab4103d2d8f441ad351af639cd96beb993c6b3841d00cc9c8f56
+   packed ok
+```
+
+The plain build works again, and the CLOCK-only regression -- the one entry 46
+could only describe -- is now caught automatically.
+
+## The BUFG anomaly, and a limit that must be stated
+
+Entry 46 recorded that inserting a BUFG on the PLL output made routing **worse**
+(2829 fallbacks instead of 943), and never explained it. The log does: with a
+BUFG the net's source becomes the BUFG output at `X91Y9/CLK1`, the partial-route
+line fires (`'clk' net was routed but not connected end to end`), and nextpnr
+falls back with *no clock gate reaches both its source and its loads*. So the
+BUFG does not fix the source-to-load span; it relocates the source and adds a
+hop. That is the concrete lead for any future attempt: the problem is gate
+*coverage*, not clock insertion.
+
+**The honest limit: this gate would NOT have caught the DCS build.** Its `clk`
+improved from fabric-943 to dedicated; on this metric it is *better*, and it
+bricked the board. No offline model check would have caught it -- the model
+said it was fine. Acceptance remains hardware only: fresh power cycle, repeated
+UART read-back, valid identity, clean VGA, stable sync. A run that merely
+matches the profile is exactly as unverified as the profile's own build is.
+
+## Limits
+
+- The profile is a *record of one build's topology*, not a specification. A
+  deliberate design change may need the profile regenerated -- which is the
+  point: it must be regenerated on purpose, not passed by accident.
+- `--compare` cannot see a clock that is newly *absent*; a net that no longer
+  appears is not a regression and is not reported.
+- The 943 baseline fallbacks are not endorsed as correct, only recorded as the
+  hardware-proven state.

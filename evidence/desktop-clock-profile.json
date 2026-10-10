@@ -1,0 +1,35 @@
+{
+  "source": "/run/media/vash/GIT/TinyTang/build/desktop/reconstruct.jhpQys/.open-pnr/nextpnr.log",
+  "nets": {
+    "keyboard_link.clk": {
+      "dedicated": true,
+      "fallbacks": 0,
+      "global_only": false,
+      "partial": false
+    },
+    "desktop_sockets.pixel_clk": {
+      "dedicated": false,
+      "fallbacks": 0,
+      "global_only": true,
+      "partial": false
+    },
+    "clk": {
+      "dedicated": false,
+      "fallbacks": 943,
+      "global_only": false,
+      "partial": false
+    },
+    "clk27": {
+      "dedicated": false,
+      "fallbacks": 1,
+      "global_only": false,
+      "partial": false
+    },
+    "hclk5": {
+      "dedicated": false,
+      "fallbacks": 4,
+      "global_only": false,
+      "partial": false
+    }
+  }
+}

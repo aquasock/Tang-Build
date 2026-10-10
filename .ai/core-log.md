@@ -1508,3 +1508,36 @@ The next modelling attempt must create a wire that actually spans two tiles, bec
 - User Test: NOT RUN
 
 ---
+
+## 49 COMMIT Unreleased 2026-10-09T21:31:33-07:00
+
+#### Coming From:
+
+Unreleased 6a172b5
+
+#### Purpose:
+
+Replace the all-dedicated clock gate that no build can satisfy with a regression check against the hardware-proven build's own recorded clock topology.
+
+#### Outcome:
+
+Entry 47's gate `2c` demanded that every clock be dedicated, and this cycle established that no build on record can satisfy it, so it was replaced with a regression check and the plain flow works again without an override. The probe found why: the fabric PLL output does exist as a `PLL_O` node (`MPLL4CLKOUT0` at tile `(27,177)`), but **no clock pip anywhere on the device is sourced from a PLL output wire**; the clock plane's PLL-class inputs are a different family, `BLPLL0CLK0..3`, at the central bridge `(54,88)/(54,93)`, and nextpnr states the consequence itself, `no clock gate reaches both its source and its loads`. A die-wide clock therefore cannot be dedicated in this model, which is why the baseline has `clk` on fabric for 943 sinks, `hclk5` 4 and `clk27` 1 with the 74.25 MHz pixel clock on global resources, and why even the DCS build kept the pixel clock global-only. `tools/clock-route-inventory.py` now records each clock net's binding as a profile (`--write-profile`) and fails only on regression against it (`--compare`), the recorded profile being `evidence/desktop-clock-profile.json` taken from the build that reproduces the hardware-proven `.fs`; `scripts/build-desktop-core.sh` gate `2c` runs that comparison, prints the whole topology and writes it to `.open-pnr/clock-topology.txt`, and stops only when a clock that was better has become worse, with `ALLOW_UNVERIFIED_CLOCK=1` still forcing a pack. Verified: the preserved baseline and the DCS logs both pass, the CLOCK-only log now fails with `clk` fallbacks 943 to 2829 and partially connected, and a plain build with no override set passes 2b and 2c and produces `84915457d3dcab4103d2d8f441ad351af639cd96beb993c6b3841d00cc9c8f56`, the baseline byte-for-byte. The same log answered entry 46's open question about the BUFG: with one inserted the net's source becomes `X91Y9/CLK1`, the partial-route line fires, and the router falls back for the same reason, so clock insertion does not fix the source-to-load span and the real lead is gate coverage. One limit is recorded rather than glossed: this gate would NOT have caught the DCS build, whose `clk` improved to dedicated and still did not boot, so acceptance remains hardware only. `evidence/clock-topology-regression-gate.txt` records the measurements and limits. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 49 of the active log and a count within the 100-entry limit. No FPGA RTL, no firmware and no third-party source was changed; the apicula fork and its chipdb were read, not modified.
+
+#### Next Steps:
+
+Target gate coverage rather than clock insertion or spanning pips, since the concrete lead is nextpnr's own `no clock gate reaches both its source and its loads` and the question of why the plane's gates are quadrant-local while the desktop's clock is die-wide; do not repeat the spanning/bridge, all-dedicated or BUFG-insertion attempts. Regenerate `evidence/desktop-clock-profile.json` deliberately if a change to the clock topology is intended, rather than passing the gate by accident, and do not treat a passing 2c as hardware acceptance. The board remains on the restored baseline; the VGA vertical-line defect, the HDMI HCLK failure, the uncommitted TinyTang socket-retry fix and the deferred desktop patch consolidation remain open, and any experimental bitstream that is loaded should be followed by a fresh power cycle and repeated console reads.
+
+#### Files Modified:
+
+- scripts/build-desktop-core.sh
+- tools/clock-route-inventory.py
+- evidence/desktop-clock-profile.json
+- evidence/clock-topology-regression-gate.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: NOT RUN
+- User Test: NOT RUN
+
+---
