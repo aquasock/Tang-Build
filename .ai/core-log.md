@@ -2087,3 +2087,32 @@ HDMI is now the only open engineering item, and this result narrows the route to
 - User Test: PASS
 
 ---
+## 68 COMMIT Unreleased 2026-10-10T12:07:16-07:00
+
+#### Coming From:
+
+Unreleased 66bb5d2
+
+#### Purpose:
+
+Validate the HDMI instrument with a known-good control before believing anything else it says, and settle with a measurement whether the desktop build's HDMI delivers a picture.
+
+#### Outcome:
+
+The control was run and it changed the answer: the instrument is sound, the desktop build's HDMI delivers no picture, and two of my own earlier readings were wrong. The user connected the Tang's HDMI to the MACROSILICON capture card and asked the question that started this, whether what we were calling a picture was only the card's own no-signal overlay. A control was therefore captured first: `/cores/console138k/phosphortang.bin` loaded and playing a track, through the same board, cable, card and PC, gives **colour** video -- 22 distinct chroma values against the monochrome the desktop build produces -- and the user confirms seeing the console in the frame, and the card's USB audio input, recorded as 5 s of 48 kHz stereo, measures peak 0.0 dBFS and rms -11.0 dBFS with the level varying from 5,041 to 11,389 across 100 ms windows, which the user then listened to and confirmed as perfect music. So the card, the cable and this PC are proven good end to end, for video and for audio, and the board drives them when the right core is loaded. Against that, the desktop build on a fresh boot -- seed 17, HDMI into the card, 120 frames -- is **monochrome in every frame**: chroma is pinned at 128 throughout, 59 frames flat at luma 16 and 61 carrying an overlay, both of which are the card's own idle behaviour rather than anything the Tang sent. The discriminator is chroma, because a real picture varies in it while the card's monochrome overlay and its flat idle field both sit at exactly 128, and that one number separates the cases the project's own tool could not. Two readings are withdrawn rather than left standing. The first is that the Tang's HDMI emits a valid TMDS signal carrying legal black, which was the card's idle field wearing a legal-black label from `tools/hdmi-frames.py`; it was never written into an entry and is withdrawn here so it is not inherited. The second is that the same tool's label was trusted for the seed-19 reading. Entries 62 and 67 concluded "no signal" and "HDMI blank" for this core and both are correct, so what was wrong was my reading of a capture and not those conclusions, and the user's monitor behaving as it does -- staying asleep -- is consistent with both. The instrument's own defect is recorded rather than fixed: `tools/hdmi-frames.py` classifies any frame with a dark background and bright pixels as `CARD LOGO`, and in this session it labelled Phosphor's colourful visualizer exactly that way, because a real dark-background picture has the same luma signature as the card's OSD. Nothing was built for this cycle -- both cores already existed and were loaded with `tangload` -- and no source, chipdb or bitstream was changed, so the apicula fork remains clean at `4281068`. `evidence/hdmi-instrument-control.txt` carries the control, the 120-frame measurement, the discriminator and both withdrawals. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 68 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Fix `tools/hdmi-frames.py` so it decides by chroma and not by a luma signature, because it has now mislabelled a real picture once and been trusted into two wrong conclusions, and its own docstring already warns that a frame's kind must be established before anything is concluded; that is a change to a tool and wants the user's approval like any other. With the instrument trustworthy, the HDMI work itself is unchanged in shape: the desktop core's bit clock fails dedicated routing at all four of its sinks, the model's clock hub has a synthetic GAMMA/HUB path whose input `HCLK_MUX_EPSILON30` is never driven by any code, and entry 66 established that learning what should drive it requires the vendor-bitstream oracle runs rather than an admission or an invention -- still the user's decision to spend. Nothing about the VGA half needs work: it renders perfectly on this build and the user sees the console on it. The board is running seed 17 again after a power cycle, with seed 19 staged beside it on the card, and the ~220 MB of raw captures are in `/tmp` and intentionally not committed.
+
+#### Files Modified:
+
+- evidence/hdmi-instrument-control.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: PASS
+
+---

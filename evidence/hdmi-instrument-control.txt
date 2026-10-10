@@ -1,0 +1,90 @@
+The HDMI instrument, validated with a control: Phosphor's picture and audio come
+through, the desktop build's does not
+
+2026-10-10.  No source, chipdb or bitstream was changed for any of this; the two
+cores already existed and were loaded with `tangload`.
+
+## Why a control was needed
+
+Two readings in this session were taken from `tools/hdmi-frames.py`'s label for
+a captured frame rather than from the frame itself, and both turned out to be
+wrong.  The first was that the Tang's HDMI emits "a valid TMDS signal carrying
+legal black"; the second read seed 19 the same way.  A capture card is a TMDS
+receiver, but a receiver with no lock still hands over frames -- its own idle
+field and its own "no video" overlay -- so "the card delivered frames" is not by
+itself evidence that the Tang sent anything.
+
+The user also asked the right question directly: *it might just be the capture
+card's logo indicating no signal.*
+
+## The control: Phosphor, which is known to drive this board's HDMI
+
+Same board, same cable, same MACROSILICON card (`345f:2133`), same PC, minutes
+apart.  `/cores/console138k/phosphortang.bin` loaded (`core 80`) and playing
+`/music/01 - Ha Újra Látom.flac`:
+
+    video   60 frames captured; luma 7 distinct, **chroma 22 distinct**
+            (u 32..207, v 15..128) -> a COLOUR picture
+    user    "A looks perfect.  i see the console."
+    audio   5 s of 48 kHz stereo recorded from the card's USB audio input
+            (ALSA card 2 "Guermok USB3 Video", device 0): peak 0.0 dBFS,
+            rms -11.0 dBFS, per-100 ms rms varying 5,041..11,389
+    user    "the audio is perfect.  i listened to the .wav file you made."
+
+So the card, the cable and this PC are proven good end to end, for video and for
+audio, and the board's HDMI output drives them when the right core is loaded.
+
+## The desktop build, fresh boot, HDMI into the card
+
+`desktop.bin` = seed 17, 120 frames (about 2 s at 60 fps):
+
+    59 frames from   0   monochrome flat      luma exactly 16, chroma 128
+    61 frames from  59   monochrome overlay   luma varies,     chroma 128
+
+**Chroma is pinned at 128 in every one of the 120 frames.**  No colour is ever
+present, so the card is never handing over a picture; the two phases are its own
+idle field and its own overlay.  This agrees with the user's own observation on
+a monitor -- "hmdi never comes up.  stays asleep" -- and with the coarse capture
+taken before it, and it is the opposite of Phosphor's 22 chroma values.
+
+## The discriminator is chroma, and the tool does not use it
+
+A real picture varies in chroma.  The card's monochrome overlay and its flat idle
+field both sit at exactly 128.  That is the test, and it separates the two cases
+in one number.
+
+`tools/hdmi-frames.py` instead classifies **any** frame with a dark background
+and bright pixels as `CARD LOGO` -- and in this very session it labelled
+Phosphor's colourful visualizer that way, because a real dark-background picture
+has the same luma signature as the card's OSD.  That defect has now produced two
+wrong conclusions, and it is recorded here rather than fixed in place, because it
+is a change to a tool and not part of this measurement.  Its docstring's own
+advice -- check which kind of frame you have before concluding anything -- is
+right; the implementation cannot yet tell them apart.
+
+## What stands, and what is withdrawn
+
+- **Stands**: the desktop core's HDMI delivers no picture.  That is now measured
+  with a validated instrument, not inferred from a monitor's behaviour, and it is
+  consistent with the model: `hclk5`, the 371.25 MHz TMDS bit clock whose period
+  is 2.6936 ns, fails dedicated routing at all four of its sinks with 2.759 ns of
+  skew.
+- **Stands**: VGA renders perfectly on this build -- the user sees the console on
+  it right now -- so the defect is the TMDS half and not the compositor.
+- **Withdrawn**: the verbal claim that the Tang's HDMI "emits a valid signal
+  carrying legal black".  That was the card's idle state wearing a legal-black
+  label.  It was never written into an entry; it is withdrawn here so it is not
+  inherited.
+- **Unchanged**: entries 62 and 67 concluded "no signal" and "HDMI blank" for the
+  desktop core.  Both are correct; what was wrong was my reading of the capture,
+  not those conclusions.
+
+## Limits
+
+The card's lock state during the flat frames is not determined -- a flat
+monochrome field is ambiguous between "no lock" and "locked black" -- but no
+picture is delivered either way, so nothing about the conclusion turns on it.
+The desktop core has no audio source, so HDMI audio is not expected of it and its
+absence there says nothing.  Phosphor's control proves the *instrument*; it does
+not by itself prove that every Tang core's HDMI works, only that the path to this
+PC does.
