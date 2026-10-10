@@ -283,3 +283,87 @@ Seed 19's bitstream is therefore built and kept as the discriminator:
 the same routed netlist the skew above was measured on.  It must be tested on
 the board after the seed-17 stability run, not during it, so the two results are
 not confounded.
+
+The discriminator, run: seed 19 renders perfectly too, and HDMI is blank again
+----------------------------------------------------------------------------
+2026-10-10.  `build/clock-monitor/desktop.aa6b0f9d733b.bin` (seed 19, the only
+other violation-free placement with `pll_nes` at `PLL_R[0]`) was staged to
+`/cores/console138k/desktop-seed19.aa6b0f9d733b.bin` and loaded with `tangload`,
+which reported `core loaded` against that path.  The boot core was deliberately
+left alone, so a power cycle reverts to seed 17.
+
+Attribution caveat, stated rather than glossed: both seed builds carry the same
+monitor stamp and the same register map and are the same 4,463,286 bytes, so
+**there is no way to read back which one is in SRAM** -- the evidence is the
+`tangload` command and its result, which is exactly the `PROT-010` limitation
+about a build having no identity on the link.
+
+Result, from the user:
+
+    VGA    perfect
+    HDMI   blank
+
+## Skew is not the discriminator, and the three placements now say so
+
+```
+  placement   clk skew     VGA
+  seed 17      4.077 ns    perfect
+  baseline     4.389 ns    lined      (older netlist, ~75 cells fewer)
+  seed 19      4.657 ns    perfect
+```
+
+Non-monotone: the highest skew of the three renders perfectly while the middle
+one is lined.  `clk` skew therefore neither predicts nor orders the display
+outcome, and the lead recorded in entry 59 -- with entry 60's framing of it --
+is dropped as an explanation rather than left standing.  Entry 55 was right to
+withdraw the skew theory; this closes it with a placement that differs.
+
+## And a perfect image is not unique
+
+Two of the three clean placements tested render perfectly, and the third differs
+from both by its **netlist** as well as its seed.  So the question the
+discriminator was built to answer -- whether seed 17 is understood or lucky --
+comes back as neither: seed 17 appears **ordinary**, and the lined baseline may
+be the outlier.  That is a better position than it sounds, because it means the
+configuration shipping today is not sitting on a lucky placement.
+
+## HDMI is blank on both clean placements
+
+Every open-flow build tested fails HDMI, and now two clean placements do, while
+at least two render VGA -- one lined and one perfect.  So the VGA lines are
+placement-dependent and the HDMI defect is not, in the same sense: the bit clock
+fails dedicated routing at all four of its sinks in both clean placements, which
+is consistent with the mechanism already located and gives no support to the idea
+that a better placement alone would bring HDMI up.
+
+## Limits
+
+Three placements is three placements; "good placements are common" rests on two
+of them, and the lined one is confounded with a different netlist.  The loaded
+build was identified by the load command rather than by a register.  Nothing was
+rebuilt or rebuilt from: both bitstreams were already built and stamped, and no
+source or chipdb was touched.
+
+Retest, same day: both tests redone with the HDMI monitor known to be on
+-----------------------------------------------------------------------
+The first readings left the monitor's power state in doubt, so both were redone
+with it confirmed on, the user's own suspicion being that it had been off:
+
+    test 1  seed 17 (the card's desktop.bin)   VGA up on every boot; HDMI never
+                                               comes up, the monitor staying asleep
+    test 2  seed 19 (the discriminator)        VGA perfect; HDMI off
+
+The results are unchanged, so the monitor-off explanation is closed and the
+defect is confirmed by eye rather than assumed: with both outputs connected and
+the monitor powered and input-selected, every open-flow build tested renders VGA
+and produces nothing the monitor will wake for.  That is also consistent with
+the capture card's own measurement on an older build -- a lock for about 0.6 s
+and then a drop -- since a lock that brief will not take a monitor out of
+standby.
+
+One process note, recorded because it cost two attempts: an earlier load command
+chain outlived its tool timeout, was moved to the background, and then held
+`/dev/ttyACM0`, so two reads failed with "multiple access on port"; the stray
+process tree was found with `fuser` and killed, and the loads were re-run as
+short single commands.  Nothing was mis-measured by it, but it is the kind of
+thing that reads as a board fault when it is not.

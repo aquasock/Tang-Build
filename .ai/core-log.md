@@ -2058,3 +2058,32 @@ Measure the GAMMA/HUB input rather than admitting or inventing it, because the p
 - User Test: N/A
 
 ---
+## 67 COMMIT Unreleased 2026-10-10T11:43:11-07:00
+
+#### Coming From:
+
+Unreleased 0753799
+
+#### Purpose:
+
+Run the seed-19 discriminator, which was built for exactly one question: whether a placement's `clk` skew explains the VGA vertical lines, and whether seed 17's perfect image is understood or merely lucky.
+
+#### Outcome:
+
+The discriminator answered both questions, and the answer is that skew has nothing to do with it. `build/clock-monitor/desktop.aa6b0f9d733b.bin` -- seed 19, the only other violation-free placement with `pll_nes` at `PLL_R[0]`, its `clk` skew measured at 4.657 ns -- was staged to `/cores/console138k/desktop-seed19.aa6b0f9d733b.bin` and loaded with `tangload`, which reported `core loaded` against that path, with the boot core deliberately left alone so a power cycle reverts. The user reports **VGA perfect and HDMI blank**.  Both tests were then redone with the HDMI monitor confirmed powered on and input-selected, because the first readings had left its state in doubt: on seed 17 VGA came up on every boot with HDMI never coming up and the monitor staying asleep, and on seed 19 VGA was perfect with HDMI off again.  The results are unchanged, so the monitor-off explanation is closed and the defect is confirmed by eye rather than assumed. One caveat is recorded rather than glossed: both seed builds carry the same monitor stamp and the same register map and are the same 4,463,286 bytes, so there is no way to read back which one is in SRAM and the evidence is the `tangload` command and its result -- which is precisely the `PROT-010` limitation about a build having no identity on the link. With that disclaimed, the three placements now on record are seed 17 at 4.077 ns of `clk` skew and perfect, the baseline at 4.389 ns and lined, and seed 19 at 4.657 ns and perfect. That is non-monotone, so skew neither predicts nor orders the display outcome; the lead recorded in entry 59, and the framing entry 60 gave it, are dropped as explanations rather than left standing, and entry 55's withdrawal of the skew theory is reinforced by a placement rather than by an argument. The second answer is that a perfect image is **not unique**: two of the three clean placements tested render perfectly, and the third differs from both by its netlist as well as its seed, having been built from roughly 75 fewer cells before the desktop host grew. So the question the discriminator was built to settle -- understood or lucky -- comes back as **neither**, because seed 17 appears ordinary and the lined baseline is the one that looks like the outlier; the configuration shipping today is not resting on a lucky placement, which is a better position than the question assumed. HDMI is blank again, and that matters as a negative of its own: every open-flow build tested fails HDMI, now including two clean placements, while at least two of them render VGA, one lined and one perfect. The VGA lines are placement-dependent and the HDMI defect is not in the same sense, and the bit clock fails dedicated routing at all four of its sinks in both clean placements, which is consistent with the mechanism already located and gives no support to the idea that a better placement alone brings HDMI up. Both bitstreams already existed and were content-stamped, so nothing was built, no source and no chipdb was touched, the apicula fork is still clean at `4281068`, and the card's boot default is still seed 17. `evidence/clock-monitor.txt` carries the tally and the reasoning. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 67 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+HDMI is now the only open engineering item, and this result narrows the route to it rather than widening it: do not spend placement sweeps on it, because two clean placements have been tested and both fail on the bit clock while a Gowin-built core drives the same board's HDMI, so the missing piece is in the model and not in the choice of seed. That leaves the decision this cycle deliberately did not take -- whether to spend the vendor-bitstream oracle runs that entry 66 established are the only way to learn what feeds the synthetic GAMMA/HUB path, since the placeholder cannot be admitted from the tables and `.ai/core.md` forbids inventing it -- and the user should choose it knowing it is the project's most expensive instrument. Meanwhile the VGA half needs no further work: the lines are placement-dependent, skew does not explain them, seed 17 is ordinary and the open build renders VGA perfectly on every boot tested. Also still open: the uncommitted TinyTang socket-retry fix, the TinyTang active-log numbering non-conformance, and the observation that seed 19 is now staged on the card while `desktop.bin` remains seed 17.
+
+#### Files Modified:
+
+- evidence/clock-monitor.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: PASS
+
+---
