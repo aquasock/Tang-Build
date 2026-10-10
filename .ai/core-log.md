@@ -1347,3 +1347,34 @@ Propose an identical-routing original-desktop control that disables only the sha
 - User Test: PASS
 
 ---
+
+## 44 COMMIT Unreleased 2026-10-09T19:50:01-07:00
+
+#### Coming From:
+
+Unreleased 3a3f107
+
+#### Purpose:
+
+Disable only the shared RGB synchronous clear while preserving original desktop data and routing to test its contribution to the VGA vertical lines.
+
+#### Outcome:
+
+The user reports that the vertical lines remain unchanged with only the shared RGB clear disabled. `tools/make-vga-clear.py` changes exactly one LUT INIT in the preserved baseline routed JSON, `u_hdmi.wide_on_rr_LUT2_I1` at `X158Y70/LUT4` from `0111` to `0000`, retaining all pixel data functions, registers, clocks, VGA blanking, connections, BELs and routes. The tool verifies fifteen synchronous-clear RGB registers on one clock, refuses unrelated clear users or a changed original clear function, and restores the old INIT in memory to demand exact equality with the input. Regeneration, the one-property comparison, all four clear truth-table addresses, unrelated-user/wrong-INIT/asynchronous-register refusal checks and Python compilation passed. Packing produced `cb7bb7872d65b09b4ef74730e85581e0da2d6d1176fc85b09795f0915d550024`, 4,492,268 bytes, uploaded separately as `/cores/console138k/desktop-vga-no-clear.bin`; no synthesis or rerouting occurred. The user power-cycled before the diagnostic load and the baseline restoration, both completed with three consistent core-ID/socket pairs at core 84, ABI 1.1 and word `0x0230`, and `osd desk on` was applied. The original baseline `7b95d942925497e9a63267ae5d979dca3eb5e4367bc08c68a5a64bbdcb0f077b` is running again; restoration was verified from the console without requesting another visual result for that unchanged image. Combined with entries 42 and 43, this shows disabling the clear alone does not improve the defect and directs the next investigation toward original glyph/colour data dependencies, without ruling out effects from finer RGB transitions or proving a particular fault. `evidence/desktop-vga-clear.txt` preserves the controlled result, artifacts, reproduction and limits. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed only this appended entry changed there and that `core.md` and settled history remain intact, and validated sequential numbering, the four-field header, six canonical sections, prose, allowed Status values and the 44-entry capacity. No FPGA RTL or new third-party source was introduced.
+
+#### Next Steps:
+
+Propose a control that forces only glyph selection to background while retaining original cell background colours, the pixel pipeline, clear and routing, to see whether the lines persist without glyph selection; a clean result would still require distinguishing data correctness from reduced RGB transitions before choosing a repair. The clear-only test is complete and did not fix the defect. Preserve the baseline and require a fresh power cycle before every FPGA load; the missing HCLK interconnect, HDMI failure, uncommitted TinyTang socket-retry fix and deferred desktop patch consolidation remain open.
+
+#### Files Modified:
+
+- tools/make-vga-clear.py
+- evidence/desktop-vga-clear.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

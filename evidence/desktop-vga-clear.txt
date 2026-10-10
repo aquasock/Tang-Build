@@ -1,0 +1,97 @@
+# VGA vertical stripes: shared-clear-only control
+
+Cycle date: 2026-10-09, America/Phoenix.
+Previous results: desktop-vga-stripes.txt and desktop-vga-pattern.txt.
+
+## Controlled result and limits
+
+The solid-white and eight-pixel green/red controls were clean; the original
+desktop had the vertical dark lines after restoration in both comparisons.
+Those controls bypassed both original pixel data dependencies and RGB clear.
+This cycle disabled only the clear while retaining the complete pixel data
+path, to separate those changes.
+
+The user power-cycled before the load and reports:
+
+  "Lines remain unchanged"
+
+Disabling the clear alone does not remove or visibly change the defect. The
+next investigation should address original glyph/colour data dependencies,
+while retaining the limitation that eight-pixel bands do not test every
+colour combination or finer transition pattern. This result does not prove
+a particular data-path fault or an analog timing cause, and is not a repair.
+
+## Exact artifact and isolation
+
+Baseline binary:
+
+  SHA256 7b95d942925497e9a63267ae5d979dca3eb5e4367bc08c68a5a64bbdcb0f077b
+  card   /cores/console138k/desktop-vga-baseline.bin
+
+Clear-disabled binary:
+
+  bytes  4492268
+  SHA256 cb7bb7872d65b09b4ef74730e85581e0da2d6d1176fc85b09795f0915d550024
+  card   /cores/console138k/desktop-vga-no-clear.bin
+
+tools/make-vga-clear.py starts from the preserved exact baseline routed JSON:
+
+  build/vga-diagnostic/baseline/pnr.json
+  SHA256 4fda33387a5a21b012b9db685f35af72c9fdd31a3de7fb5948164007ecbe44b5
+
+It changes precisely one property: INIT of u_hdmi.wide_on_rr_LUT2_I1 at
+X158Y70/LUT4, from 0111 to 0000. The LUT drives only the synchronous RESET
+inputs of the fifteen DFFRE RGB registers. The source compositor clears RGB
+when !(wide_on_rr && overlay); this diagnostic always permits the original
+colour data into those registers. All pixel data functions, register types,
+clocks, VGA blanking, connections, BELs and routed wires remain unchanged.
+
+Restoring the old INIT in memory must reproduce the complete input JSON.
+The tool also requires all fifteen RGB registers to share a clock and clear,
+the clear to have no unrelated users, and its original function to be the
+expected NAND. The manifest preserves the cell/BEL/INIT and both JSON hashes.
+Generated routed JSON:
+
+  build/vga-clear/clear-disabled.json
+  SHA256 e7ea0f63b2f3c0be3cdc99f9fbd60e886159a8c6e396c3f33b70115e411accb5
+
+Regeneration matched the staged JSON exactly, with one differing cell and one
+INIT property. All four clear truth-table addresses produce zero. Unrelated
+clear users, a changed original INIT and an asynchronous-clear register were
+rejected. Python compilation passed. Packing completed using GW5AST-138C and
+the same fork as the baseline, with no synthesis or rerouting.
+
+## Deployment and reproduction
+
+Upload confirmed all 4,492,268 bytes. The clear-disabled load reported core
+loaded, status 00026230 and socket declaration 0x0230. Three fpga/tangini pairs
+consistently reported core 84, ABI 1.1 and the expected VGA sockets; osd desk
+on was applied. Raw serial output is kept locally in
+build/vga-clear/board-{upload,no-clear}.txt. The normal desktop.bin and boot
+configuration were preserved.
+
+After another user-confirmed power cycle, the exact baseline loaded
+successfully with status 00026230 and three consistent core-ID/socket pairs;
+osd desk on was applied. The original image is running again. Restoration
+output is in build/vga-clear/board-restored.txt; no additional visual result
+was requested for this unchanged baseline.
+
+From the repository root:
+
+  tools/make-vga-clear.py build/vga-diagnostic/baseline/pnr.json \
+    build/vga-clear/clear-disabled.json
+  PYTHONHOME=/home/vash/oss-cad-suite \
+    PYTHONPATH=/run/media/vash/GIT/apicula-mathieufro:/home/vash/tools/pydeps \
+    /home/vash/oss-cad-suite/py3bin/python3 -m apycula.gowin_pack \
+    -d GW5AST-138C -o build/vga-clear/clear-disabled.fs \
+    build/vga-clear/clear-disabled.json
+  python3 tools/fs-to-bin.py build/vga-clear/clear-disabled.fs \
+    -o build/vga-clear/clear-disabled.bin
+
+Use the exact preserved routing to reproduce this binary. Do not commit
+generated binaries or routed JSON. A proposed next control is to force only
+the glyph selector to background, retaining the original cell background
+colours, pixel pipeline and clear. This can determine whether the reported
+lines persist without glyph selection, but fewer RGB transitions would still
+limit interpretation of a clean result. Obtain approval for that next cycle
+and retain the fresh-power-cycle rule before every FPGA load.
