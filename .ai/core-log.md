@@ -1634,3 +1634,34 @@ Ask what `route_clk_net` requires that this route does not satisfy, since `clk` 
 - User Test: N/A
 
 ---
+
+## 53 COMMIT Unreleased 2026-10-10T07:30:14-07:00
+
+#### Coming From:
+
+Unreleased 1177d74
+
+#### Purpose:
+
+Find a known-good VGA build to compare the vertical-line defect against, and use it to close off the mode and placement theories and name a suspect.
+
+#### Outcome:
+
+This cycle gives the vertical-line defect its first known-good artefact and ends with one named suspect. `evidence/desktop-open.bin`, sha256 `fadd00bab669a4a1c3a5d2e9029fb48823cff50bc8adf38d032f4ff6caab069d` at 4,463,286 bytes -- the artefact the record called visually good but unstable-sync -- was staged and loaded on the board after a clean power cycle, and the user reports that TinyDesk looked and worked perfectly in both console and desktop mode; a booted Phosphor core failed as expected and a Nestang core was not tried. That matters beyond having a good image, because TinyDesk is the same text-and-glyph desktop that shows the lines in the current build, so the glyph path itself is not the fault and the font and column hypotheses built on the earlier `b` map are refuted. The monitor's own OSD reports H 44.9 kHz and V 59.9 Hz with the perfect build -- identical to the lined build -- so the horizontal resolution and mode theory is refuted, both being 1280x720p60 from `TOTALWIDTH 1650` at a 74.25 MHz pixel clock. The current tree was then rebuilt with `pll_nes` back on the vendor's site `PLL_B[1]` (X32Y108) and staged as `desktop-vendor-site.bin`, sha256 `5b8648ea0a46d3bc49a043f8fd496d326fc280d18b226cd3a3b7cd25ddba63d5` at 4,463,286 bytes, and after a clean power cycle and a proper load the core answered on UART three times out of three but the VGA was dead, so the PLL site is refuted and the earlier dead-VGA observation was not an artefact of a bad load. A bitwise comparison shows the reference and the current baseline differ as designs rather than tweaks, 4.8% of bytes across 61,945 clusters with different lengths, and the project's own edits against upstream `tangcore/nestang/src` are interface plumbing with `iosys/textdisp_wide.sv`, the glyph and column logic, unchanged. The named suspect is TinyTang `16b49b3`, titled Align desktop VGA timing and qualify four placement variants, dated 2026-10-07, which is the only commit in that history touching VGA timing: it changed `fpga/desktop/desktop_pmod.sv` so that `visible`, `hs` and `vs` became registered on the pixel clock while the compositor's `rgb`, already registered from `cx` and `cy`, did not move, which is a one-output-pixel horizontal phase shift against a grid of two output pixels per font column and has the shape of columns that alternately line up and do not; the commit's own comment says it was done to stop the previous line's blanking glyph appearing at x=0. This is a suspect and not a confirmed cause, and nothing has been built or tested from it. Two measurements were added: the new `tools/clock-skew-report.py` post-route hook reports the real routed skew of every clock net, because `tools/pnr-timing.py` prints `clk-skew` only inside violation blocks so a passing build reports 0.000 meaning unmeasured rather than none, and the timing-clean build actually carries `clk` 4.389 ns, `hclk5` 2.758 ns and `desktop_sockets.pixel_clk` 0.209 ns, which also refutes the skew theory of the lines because the vendor site carries more `clk` skew at 5.606 ns with identical pixel-clock skew; and an eight-seed sweep shows only seed 23 has zero setup or hold violations while the others have two to ten, with violation count tracking skew, so there is no alternate bootable placement to compare against. One correction is carried here as required: entry 48 recorded User Test as NOT RUN because it was committed before the user reported, and the user's later confirmation that the restored board booted and answered on UART is recorded in this entry, which follows it; entry 48 itself is left as settled history. `evidence/vga-output-phase.txt` carries the method, the artefacts, the suspect and the limits, including that the attempted `.bin` to `.fs` reversal produced a malformed stream and that the reference's exact routed netlist is still not recovered. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 53 of the active log and a count within the 100-entry limit. No FPGA RTL, firmware or third-party source was changed in this cycle; the apicula fork and its chipdb were read, not modified.
+
+#### Next Steps:
+
+Build the current tree with the VGA output phase corrected and test it on the CRT, since a one-pixel shift against a two-pixel column grid is the shape of the defect and the change that introduced it is identified; the cleaner of the two variants is to keep `visible` registered and register `rgb` on the same edge so data and gating share one phase, rather than reverting `visible` to combinational and restoring the x=0 blanking leak the commit was written to fix. Confirm first whether the reference build's picture differs from the lined one anywhere else besides the columns, since the reference shows TinyDesk cleanly and is therefore a like-for-like comparison. Do not repeat the mode, PLL-site, spanning-pip, all-dedicated, BUFG-insertion or contention attempts, and do not treat any offline pass as hardware acceptance. The board is left running the perfect reference build with a power cycle returning to the lined baseline; the HDMI HCLK failure, the uncommitted TinyTang socket-retry fix and the deferred desktop patch consolidation remain open.
+
+#### Files Modified:
+
+- tools/clock-skew-report.py
+- evidence/vga-output-phase.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

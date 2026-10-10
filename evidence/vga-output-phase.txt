@@ -1,0 +1,101 @@
+# The VGA lines: the reference build is found, and the phase change with it
+
+Cycle 2026-10-10. Base: Tang-Build `1177d74`. Board on the desktop bench, attached.
+This cycle is the first in which the vertical-line defect has a **known-good
+artefact to compare against**, and it ends with a single named suspect.
+
+## 1. The working reference
+
+`evidence/desktop-open.bin` (**sha256 `fadd00ba...`**, 4,463,286 bytes) — the
+artefact the record called "visually good but unstable-sync" — was loaded on the
+board (clean power cycle, then `tangload`). The user reports **TinyDesk looked
+and worked perfectly**, tried in both console and desktop mode. A booted
+Phosphor core failed as expected; a Nestang core was not tried.
+
+This matters beyond "we have a good image": TinyDesk is the *same* text-and-glyph
+desktop that shows the lines in the current build. **So the glyph path itself is
+not the fault** — the same glyphs render cleanly in the reference. That kills the
+font/column hypotheses built on the `b` map earlier in the session.
+
+## 2. The mode is not the cause
+
+The monitor's own OSD reports **H 44.9 kHz / V 59.9 Hz** with the *perfect*
+build — identical to the lined build. Same mode, same monitor, opposite result.
+The horizontal-resolution theory is refuted. (1280x720p60 either way:
+`TOTALWIDTH 1650` at a 74.25 MHz pixel clock.)
+
+## 3. The PLL site is not the cause
+
+The current tree was rebuilt with `pll_nes` back on the vendor's site
+`PLL_B[1]` (X32Y108) — the site Gowin's own flow used — and staged. After a
+**clean power cycle and a proper load** the core came up on UART (`core 84`,
+3/3) but the **VGA was dead**. So reverting the PLL site does not restore the
+good picture, and the earlier dead-VGA observation was not an artefact of a bad
+load. Artefact: `desktop-vendor-site.bin`, sha256 `5b8648ea...`, 4,463,286 bytes.
+
+## 4. The two builds differ as designs, not as tweaks
+
+`fadd00ba` vs the current baseline `7b95d942`: **4.8% of bytes differ across
+61,945 clusters**, and the lengths differ (4,463,286 vs 4,492,268). A bit-level
+diff cannot localise anything. The project's own edits against upstream
+(`tangcore/nestang/src`) are interface plumbing — `ifdef DESKTOP_CORE` ports in
+`nes2hdmi.sv` and `nestang_top.sv`, the `desktop_pmod` instantiation, a
+`CORE_ID`, and a compositing hook — and `iosys/textdisp_wide.sv`, the glyph and
+column logic, is **unchanged from upstream**.
+
+## 5. The suspect: a one-pixel phase shift in the VGA output
+
+`fpga/desktop/desktop_pmod.sv` in **TinyTang `16b49b3`, "Align desktop VGA
+timing and qualify four placement variants" (2026-10-07)** — the only commit in
+that history that touches VGA timing:
+
+```diff
+-    wire visible = cx < 1280 && cy < 720;
+-    wire hs = cx >= 1390 && cx < 1430;
+-    wire vs = cy >= 725 && cy < 730;
++    logic visible, hs, vs;
++    always_ff @(posedge pixel_clk) begin
++        visible <= cx < 1280 && cy < 720;
++        hs      <= cx >= 1390 && cx < 1430;
++        vs      <= cy >= 725 && cy < 730;
++    end
+     wire [3:0] red   = visible ? rgb[23:20] : 4'b0;
+```
+
+The compositor's `rgb` is registered from `cx`/`cy`; the gating moved one pixel
+clock later while the data did not. That is a **one-output-pixel horizontal
+phase shift in the VGA output**, and a one-pixel shift against a grid of two
+output pixels per font column is exactly the shape of "some columns line up,
+some don't". The commit's own comment says it was done to stop the previous
+line's blanking glyph appearing at x=0 — i.e. it fixed the blanking edge and
+moved the data phase to do it.
+
+**This is a suspect, not a confirmed cause.** It has not been built or tested.
+
+## 6. Two measurements this cycle added
+
+- **`tools/clock-skew-report.py`** (new, post-route hook) reports the real routed
+  skew of every clock net, min to max over its sinks. `tools/pnr-timing.py` only
+  prints `clk-skew` inside violation blocks, so a build that *passes* timing
+  reports 0.000 — which is "unmeasured", not "no skew". The timing-clean build
+  actually carries `clk` **4.389 ns**, `hclk5` **2.758 ns**,
+  `desktop_sockets.pixel_clk` 0.209 ns. This also refutes the skew theory of the
+  lines: the vendor site has *more* `clk` skew (5.606 ns) and identical
+  pixel-clock skew.
+- **Seed sweep, 8 seeds:** only **seed 23 has zero setup/hold violations**; seeds
+  7, 11, 13, 17, 19, 29, 31 have 2-10 hold violations, and the violation count
+  tracks their skew. **There is no alternate bootable placement to A/B against**,
+  which is why the placement experiments had to go through the PLL *site*.
+
+## Limits
+
+- The suspect is a code reading, not a result. Nothing was built from it.
+- `evidence/desktop-open.bin`'s exact routed netlist is still not recovered, so
+  the comparison is artefact-to-artefact, not netlist-to-netlist.
+- The `.bin` -> `.fs` reversal attempted this cycle produced a malformed stream
+  (a 24-byte unpack), so `gowin_unpack`-based comparison is not available yet;
+  the docstring's "the .bin is the packed .fs and nothing else" does not hold for
+  this artefact.
+- Board state at the end: running the **perfect** reference build; a power cycle
+  returns to the lined baseline, which is untouched at
+  `/cores/console138k/desktop.bin`.
