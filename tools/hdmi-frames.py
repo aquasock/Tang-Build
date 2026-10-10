@@ -7,9 +7,15 @@ Answers the questions a picture cannot:
 
   * how many DISTINCT frames there are, and in what pattern over time -- which
     is how a link that comes up and then dies looks from the receiving end;
-  * whether a frame is the Tang's video or the CARD's own logo.  Legal video
-    black is luma 16 and the active pixels are never 0; the card's logo is
-    bright text on a background of luma 0.  This tool is what says which;
+  * whether a frame is a real picture or the CARD's own monochrome output.
+    **Chroma is the discriminator**, and it is the only one that works: a real
+    picture varies in chroma, while the card's "No Video" overlay, its flat idle
+    field and a source sending legal black are all monochrome -- chroma pinned at
+    128 in every pixel.  An earlier version of this tool decided by luma alone
+    ("dark background with bright text = the card's logo"), which is a signature
+    a real dark-background picture shares; it labelled a working, colourful
+    capture as the card's logo, and two conclusions were drawn from that before
+    the colour was checked.  Decide by chroma first, then describe the luma.
   * where the differing frames differ, and by how much.
 
 Written after a 15-second capture came back as 863 frames of the card's logo and
@@ -63,13 +69,22 @@ for d, idx in groups.items():
     ys = fr[0::2]
     cs = fr[1::2]
     cy = collections.Counter(ys)
+    n_chroma = len(set(cs))
     kind = "?"
-    if max(ys) <= 16 and min(ys) >= 16:
-        kind = "LEGAL BLACK (the source's own video black, luma 16 throughout)"
+    if n_chroma > 2:
+        kind = (f"PICTURE (chroma varies over {n_chroma} values -- the source is "
+                "sending video)")
+    elif max(ys) <= 16 and min(ys) >= 16:
+        kind = ("NO PICTURE -- monochrome, luma 16 throughout (this is what the "
+                "card shows with no input; it is also what a source's legal "
+                "black looks like, so on its own it does not say the source sent it)")
     elif min(ys) == 0 and max(ys) > 96:
-        kind = "CARD LOGO (bright text on background 0 -- not legal video)"
+        kind = ("NO PICTURE -- the card's own 'No Video' overlay (monochrome, "
+                "bright text on a background of luma 0)")
+    else:
+        kind = "NO PICTURE -- monochrome, chroma flat at 128"
     print(f"{d}: luma distinct={len(cy)} min={min(ys)} max={max(ys)} "
-          f"mean={sum(ys)/len(ys):.1f} | chroma distinct={len(set(cs))} "
+          f"mean={sum(ys)/len(ys):.1f} | chroma distinct={n_chroma} "
           f"min={min(cs)} max={max(cs)}")
     print(f"    -> {kind}")
     if len(cy) > 6:

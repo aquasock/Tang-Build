@@ -2145,3 +2145,34 @@ The HDMI question is answered and the remaining work is the chipdb's clock netwo
 - User Test: PASS
 
 ---
+
+## 70 COMMIT Unreleased 2026-10-10T12:22:56-07:00
+
+#### Coming From:
+
+Unreleased 1d7799e
+
+#### Purpose:
+
+Make the project's HDMI capture classifier decide a frame's kind by chroma instead of by a luma signature that mislabels a real dark-background picture, because it has now mislabelled a working capture once and been trusted into two wrong conclusions.
+
+#### Outcome:
+
+The instrument now decides a frame's kind by chroma, and the change is verified against the three captures this project already holds. The defect was that `tools/hdmi-frames.py` classified by luma alone, so any frame with a dark background and bright pixels was labelled the capture card's own logo, a signature a real dark-background picture shares, and Phosphor's colourful visualiser was called the card's logo and two readings were drawn from that label before the chroma was checked by hand: that the Tang's HDMI emitted a valid signal carrying legal black, and that a monochrome capture was a picture. The tool had been printing the chroma it measured and not using it. It now tests chroma first, because a real picture varies in it while the card's flat idle field, its "No Video" overlay and a source's legal black are all monochrome with chroma pinned at 128, and only then describes the luma, separating the card's flat field from its overlay from plain monochrome; the docstring records why, and that the old rule mislabelled a working capture, so the mistake is not inherited. Verified against two known-good captures and one known-bad: `/tmp/hdmi-phosphor.yuv`, Phosphor through the Gowin flow at 60 frames, and `/tmp/hdmi-vendor.yuv`, the desktop core through the Gowin flow at 120 frames, both classify as PICTURE in every non-transition frame, while `/tmp/hdmi-desktop-now.yuv`, the open flow's seed 17 at 120 frames, classifies as NO PICTURE throughout, which is the separation the old rule could not make and which agrees with entry 69's controlled result that the vendor flow delivers colour and the open flow does not. `evidence/hdmi-chroma-classifier.txt` carries the defect, the rule and the full output. The project's position is unchanged by this cycle and is now fully stated: the purpose, TinyTang building and running fully open-source, is met on every count but one -- the open flow places, routes, packs, loads and runs, the VGA path renders perfectly on silicon, the clocks measure correct, Phosphor runs with video and audio, and the fs-to-bin path is validated -- and the single gap is that the open flow cannot route the 371.25 MHz TMDS bit clock to the serialisers, because nextpnr selects the fabric-fed ALPHA/BETA input where the vendor selects the HCLK network's GAMMA input at the divider, with the chipdb's network input unconnected. Nothing was built, loaded or changed on the board this cycle, no source, chipdb or bitstream changed, and the apicula fork remains clean at `4281068`. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 70 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+The one remaining gap has a located cause and a single next move, and both are already costed: the open flow's failure to route the TMDS bit clock is a defect in the chipdb's clock network and not in the design, and entries 64 to 66 narrowed it to the model's synthetic GAMMA/HUB path whose input `HCLK_MUX_EPSILON30` no code ever drives, so it can neither be admitted nor invented, and entry 66 established that the only way to learn what should drive it is the vendor-bitstream oracle method, pinning one CLKDIV instance per vendor run with an `INS_LOC` side and bracket and decoding the lit table-48 rows, which remains the user's decision to spend. Any chipdb change must then be gated by `tools/chipdb-hclk-gaps.py` on `hclk5` and `hclk_pips`, where the spanning count must rise above 132 or the fork is restored, a gate that has correctly closed three attempts. Until the clock network is modelled, no core that needs HDMI should be built expecting it to work, and the two 2026-10-10 HDMI experiments already say so: same RTL through both flows gives colour on one and none on the other. Also open and untouched: the TinyTang socket-retry fix, which sits uncommitted in that repository; the TinyTang active-log numbering non-conformance; and the HDMI connector's pin map, which this repository's reference does not record and which any future DDC or EDID work would need. The capture instrument needs no further work for now, because it is now verified against known-good and known-bad controls and can be trusted for the next measurement.
+
+#### Files Modified:
+
+- tools/hdmi-frames.py
+- evidence/hdmi-chroma-classifier.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

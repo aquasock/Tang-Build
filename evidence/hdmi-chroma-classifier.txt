@@ -1,0 +1,100 @@
+hdmi-frames.py: classifying a capture by chroma
+==============================================
+
+Cycle: 2026-10-10, entry 70.  Tool: tools/hdmi-frames.py.  Board: none needed --
+this is a change to an instrument, verified against captures already on disk.
+
+The defect
+----------
+
+The classifier decided a frame's kind from luma alone:
+
+    if max(ys) <= 16 and min(ys) >= 16:
+        kind = "LEGAL BLACK ..."
+    elif min(ys) == 0 and max(ys) > 96:
+        kind = "CARD LOGO (bright text on background 0 -- not legal video)"
+
+The second rule is satisfied by any dark-background picture with bright pixels,
+which is a signature a real colour picture shares with the card's own on-screen
+display.  In this project it labelled Phosphor's colourful visualiser as the
+card's logo, and it labelled the open build's monochrome capture the same way.
+Two wrong readings were drawn from it before the chroma was checked by hand:
+that the Tang's HDMI emitted a valid signal carrying legal black, and that the
+card's logo was a picture.  The tool printed the chroma it measured and did not
+use it.
+
+The fix
+-------
+
+Chroma decides.  A real picture varies in chroma; the card's flat idle field,
+its "No Video" overlay and a source sending legal black are all monochrome,
+with chroma pinned at 128 in every pixel.  So chroma is tested first, and luma
+only then describes the frame:
+
+    n_chroma = len(set(cs))
+    if n_chroma > 2:            -> PICTURE
+    elif luma 16 throughout:    -> NO PICTURE, flat monochrome field
+    elif black with bright:     -> NO PICTURE, the card's No Video overlay
+    else:                       -> NO PICTURE, monochrome, chroma flat
+
+The docstring was rewritten to say why, and to record that the old luma rule
+mislabelled a working capture, so the mistake is not inherited.
+
+Verification
+------------
+
+Three captures, all 1280x720 YUYV from the MACROSILICON card, through the same
+board, cable and PC.  Two are known-good (colour) and one is known-bad
+(monochrome).  The fixed tool must separate them:
+
+  /tmp/hdmi-phosphor.yuv     - Phosphor playing, 60 frames  -> expect PICTURE
+  /tmp/hdmi-vendor.yuv       - same RTL, Gowin flow, 120 fr -> expect PICTURE
+  /tmp/hdmi-desktop-now.yuv  - open flow, seed 17, 120 fr   -> expect NO PICTURE
+
+========================================================================
+/tmp/hdmi-phosphor.yuv  --  Phosphor (Gowin), known good
+========================================================================
+
+/tmp/hdmi-phosphor.yuv: 60 frames of 1280x720 YUYV, 1843200 bytes each
+  136f445cfd6b:     1 frames, first at     0 (  1.7 per cent)
+  ae4f0a282db4:    59 frames, first at     1 ( 98.3 per cent)
+136f445cfd6b: luma distinct=3 min=0 max=19 mean=16.0 | chroma distinct=1 min=128 max=128
+    -> NO PICTURE -- monochrome, chroma flat at 128
+ae4f0a282db4: luma distinct=7 min=0 max=255 mean=20.5 | chroma distinct=22 min=15 max=207
+    -> PICTURE (chroma varies over 22 values -- the source is sending video)
+
+========================================================================
+/tmp/hdmi-vendor.yuv  --  desktop core, Gowin flow, known good
+========================================================================
+
+/tmp/hdmi-vendor.yuv: 120 frames of 1280x720 YUYV, 1843200 bytes each
+  136f445cfd6b:     1 frames, first at     0 (  0.8 per cent)
+  73dce421adef:   119 frames, first at     1 ( 99.2 per cent)
+136f445cfd6b: luma distinct=3 min=0 max=19 mean=16.0 | chroma distinct=1 min=128 max=128
+    -> NO PICTURE -- monochrome, chroma flat at 128
+73dce421adef: luma distinct=7 min=0 max=255 mean=18.3 | chroma distinct=24 min=15 max=207
+    -> PICTURE (chroma varies over 24 values -- the source is sending video)
+
+========================================================================
+/tmp/hdmi-desktop-now.yuv  --  desktop core, open flow, known bad
+========================================================================
+
+/tmp/hdmi-desktop-now.yuv: 120 frames of 1280x720 YUYV, 1843200 bytes each
+  8122393e00d4:    59 frames, first at     0 ( 49.2 per cent)
+  136f445cfd6b:     1 frames, first at    59 (  0.8 per cent)
+  80dbf0b30d1d:    60 frames, first at    60 ( 50.0 per cent)
+8122393e00d4: luma distinct=1 min=16 max=16 mean=16.0 | chroma distinct=1 min=128 max=128
+    -> NO PICTURE -- monochrome, luma 16 throughout (this is what the card shows with no input; it is also what a source's legal black looks like, so on its own it does not say the source sent it)
+136f445cfd6b: luma distinct=3 min=0 max=19 mean=16.0 | chroma distinct=1 min=128 max=128
+    -> NO PICTURE -- monochrome, chroma flat at 128
+80dbf0b30d1d: luma distinct=158 min=0 max=255 mean=0.9 | chroma distinct=1 min=128 max=128
+    -> NO PICTURE -- the card's own 'No Video' overlay (monochrome, bright text on a background of luma 0)
+
+Result
+------
+
+The two known-good captures classify as PICTURE and the known-bad one as NO
+PICTURE in every frame, which is the separation the old luma rule could not
+make.  The instrument now agrees with the reading that was established by
+entry 69's controlled experiment: the vendor flow delivers colour, the open
+flow does not.
