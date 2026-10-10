@@ -44,6 +44,14 @@ out=${2:-$tree/.open-fs}
 
 A=${APICULA_FORK:-/run/media/vash/GIT/apicula-mathieufro}
 NPNR=${NEXTPNR_BUILD:-/home/vash/tools/nextpnr-mathieufro}
+# The placement seed.  Placement decides how much clock skew this design's main
+# clock accumulates: `clk` cannot reach the dedicated network from any PLL site,
+# because the HCLK interconnect is not modelled, so it rides general fabric and
+# the skew depends on where its segments land.  Seed 23, with pll_nes pinned to
+# PLL_R[0], is the placement that measures violation-free -- and the gate below
+# refuses to publish one that does not.
+SEED=${NEXTPNR_SEED:-23}
+export NEXTPNR_SEED=$SEED
 PY=${PY:-/home/vash/oss-cad-suite/py3bin/python3}
 PYDEPS=${PYDEPS:-/home/vash/tools/pydeps}
 DEVICE_PART="GW5AST-LV138PG484AC1/I0"
@@ -71,6 +79,24 @@ bash "$here/synth-desktop.sh" "$tree" "$tree/nestang-top-open.json"
 log "=== 2. place and route ==="
 bash "$here/pnr-desktop.sh" "$tree" "$tree/nestang-top-open.json"
 [[ -f $tree/.open-pnr/pnr.json ]] || { log "no routed netlist produced"; exit 1; }
+
+# A routed netlist is not a working bitstream.  `pnr-desktop.sh` passes nextpnr
+# `--timing-allow-fail`, so a violated path is reported and the flow carries on
+# and packs it -- and a build with a hold violation is a build that runs by
+# luck, whatever the screen happens to do.  TinyTang's Gowin recipe sets the
+# same bar for its own binary ("zero setup/hold violations"), so require it here
+# and refuse to pack.  tools/pnr-timing.py explains why this reads the log:
+# hold violations appear in no structured field of nextpnr's report.
+log "=== 2b. timing gate (seed $SEED) ==="
+if ! "$PY" "$root/tools/pnr-timing.py" "$tree/.open-pnr/nextpnr.log"; then
+    log ""
+    log "REFUSING TO PACK: the place-and-route has timing violations."
+    log "A bitstream from this netlist is not one to put on the board."
+    log "The paths and their slack are above; what causes the skew, and the"
+    log "PLL site that decides it, are recorded in"
+    log "$tree/src/desktop/desktop.cst and evidence/hclk-route-gap.txt."
+    exit 1
+fi
 
 # ----------------------------------------------------------------- 3. packing
 # No *_as_gpio options: see the note at the top of this script.

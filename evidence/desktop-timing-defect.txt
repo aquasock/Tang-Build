@@ -1,0 +1,138 @@
+# The desktop core's timing defect: the flow was shipping violating builds
+
+`67e8d724` built, loaded, reported `core loaded`, and then produced nothing — no
+UART answer, no raster. Ten place-and-route seeds and a PLL sweep later, the
+cause: **the build had ten hold violations, and the flow packed it anyway.**
+
+## The defect
+
+`scripts/pnr-desktop.sh` passes nextpnr `--timing-allow-fail`. That option makes
+nextpnr *report* a violated path and then carry on, and because nothing later in
+the flow reads the report, a violating netlist is packed and published like any
+other. The build was never failing; it was never being checked.
+
+```
+Warning: Hold/min time violation for clock 'posedge clk':      x10
+  clk-skew  -1.76    Net clk (150,64) -> (150,52)
+                     Sink sys_inst.desktop_endpoint.response_DFFRE_Q_23.CE
+  clk-skew  -2.09    Net clk (154,60) -> (160,45)
+                     Sink u_hdmi.u_wide.mem.0.7.CLKA
+```
+
+Hold violations do not care about frequency. A register that can capture a value
+one edge early is a register that can come up in the wrong state, which is how a
+design with no UART answer and no raster looks from outside.
+
+TinyTang's Gowin recipe already sets the right bar for its own binary — it
+refuses to publish one with any setup or hold violation — which is why the
+vendor's build has none and ours had ten.
+
+## Why the clock is on fabric at all
+
+`clk` — the 21.477 MHz main clock, out of `pll_nes` — fails dedicated routing for
+**all 943 of its sinks**, in every build and from every PLL site:
+
+```
+943 Failed to route net 'clk'   from X32Y108/MPLLCLKOUT0
+  4 Failed to route net 'hclk5'
+  1 Failed to route net 'clk27'
+```
+
+The database's clock network cannot span the die. `tools/chipdb-hclk-tiles.py`
+against `GW5AST-138C.msgpack.xz`:
+
+```
+db.hclk_pips: 171 tiles
+rows carrying HCLK tiles: 54
+row 1:   2 tiles, x 0..181, gaps [(0, 181)]
+row 81:  2 tiles, x 0..181, gaps [(0, 181)]
+row 108: 66 tiles, x 2..178, gaps include (12, 36), (145, 168)
+```
+
+Most rows carry two tiles, one at each edge, with 180 columns between them
+unmodelled — the same gap `evidence/hclk-route-gap.txt` describes for the TMDS
+bit clock. So the clock rides general fabric, and **what the placement decides
+is not whether it rides fabric but how much skew that costs.**
+
+## Placement is the lever, and seed alone is not
+
+Eight seeds on the tree's own constraints, accepting on zero violations:
+
+```
+seed  7   hold 10   worst-skew -2.360
+seed 11   hold 10   worst-skew -1.520
+seed 13   hold 10   worst-skew -1.510
+seed 17   hold 10   worst-skew -2.280
+seed 19   hold  9   worst-skew -1.640
+seed 23   hold  5   worst-skew -2.040
+seed 29   hold  5   worst-skew -1.430
+seed 31   hold 10   worst-skew -2.670
+```
+
+Never zero. But the failures all originate at one pin, `X32Y108/MPLLCLKOUT0` —
+`pll_nes` — and the tree's `src/desktop/desktop.cst` pins the PLLs. Their macro
+table has twelve sites:
+
+```
+PLL_L[0..3]  (1,27) (0,45) (0,63) (1,81)       pll_27 at PLL_L[1], pll_hdmi at PLL_L[3]
+PLL_B[0..3]  (28,108) (32,108) (146,108) (150,108)   <- all inside row-108 gaps
+PLL_R[0..3]  (177,27) (178,45) (178,63) (177,81)
+```
+
+Every row-108 site is inside a gap, and that is where the vendor's own
+place-and-route put `pll_nes`. Gowin's tool knows the real clock network; the
+open database does not, so the vendor's site is the worst one available here.
+
+Site x seed, accepting on zero violations:
+
+```
+site        seed  hold  worst-slack  worst-skew
+PLL_B[1]    7     10    -0.600       -2.090     <- the vendor's site, the tree's pinning
+PLL_L[0]    7      4    -0.240       -1.290
+PLL_L[2]   11      2    -0.210       -0.620
+PLL_R[3]    7      1    -0.270       -1.010
+PLL_R[0]    7      2    -0.240       -0.390
+PLL_R[0]   17      4    -0.100       -0.800
+PLL_R[0]   23      0     0.000        0.000     <- clean
+PLL_R[0]   29     10    -0.790       -1.520
+```
+
+`PLL_R[0]` is X177Y27, the site nearest the logic, which clusters around
+x=133..157, so the fabric run is shortest and the skew smallest. Seed 23, with
+that placement, measures clean — `setup=0 hold=0`, every clock passing its
+constraint, and `div5` landing on `CLKDIV_0`, the vendor's own slot, as a side
+effect.
+
+## The fix, and what it is not
+
+```
+pll_nes.PLL_inst   PLL_B[1] (X32Y108)  ->  PLL_R[0] (X177Y27)
+placement seed                            23
+result                                    zero setup and hold violations
+```
+
+The result is a placement that meets the timing requirement — **not a repaired
+clock network.** All 943 `clk` fabric fallbacks remain: the clock still rides
+general fabric, and this is clean by nextpnr's delay model, which is the same
+model the vendor's flow trusts but a model nonetheless. Whether it runs on
+silicon was only answerable on the board, and the user reports it does: four
+power cycles, VGA up every time.
+
+## The gate
+
+`scripts/build-desktop-core.sh` now runs `tools/pnr-timing.py` on the
+place-and-route log between routing and packing, and exits without packing if
+any clock failed its constraint or any setup or hold path violated. The reason a
+violated build was ever published is that nothing in the flow read the timing
+report; that is now the one thing it refuses to skip.
+
+`tools/pnr-timing.py` reads the log rather than nextpnr's JSON because the JSON
+carries `fmax`, `critical_paths` and `utilization` — and `critical_paths` holds
+the worst *setup* paths only. Hold violations appear in no structured field.
+
+## The trap this cycle set
+
+`7b95d942` (clean) and `67e8d724` (violating) are both 4,492,268 bytes: the same
+design, placed differently, so the same bit count. The board's shell has no hash
+tool, so nothing on the console distinguishes them, and `tangload`'s byte count
+matches too. A build's identity has to be established on the host.

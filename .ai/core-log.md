@@ -1217,3 +1217,66 @@ The card is as intended and the display work's target is unchanged: the intercon
 - User Test: PASS
 
 ---
+
+## 40 COMMIT Unreleased 2026-10-09T18:41:11-07:00
+
+#### Coming From:
+
+Unreleased 0ea360c
+
+#### Purpose:
+
+Explain why the console's socket declaration kept failing to reach the desktop core, and fix it where it actually went wrong.
+
+#### Outcome:
+
+The socket declaration was never reaching the core, and the reason was in the firmware. `tangload` printed `core loaded` and then, most of the time, nothing at all -- no `sockets declared` line -- and the core came up with `c0 = 0x0000`, so every VGA socket stayed released and the monitor stayed asleep. Reading the boot path in TinyTang settled it: `tdsh_bl616_run_until()` runs the card's `scripts/boot.tdsh` at shell start, `boot.tdsh` calls `tangload`, and on success `tangload` calls `tang_ini_core_loaded()`, which looks the loaded core's ID up in a table and requires `read_reg(REG_ABI, abi)` to succeed before it prints anything or writes the word. If that read misses, `socket_core_loaded()` returns nullptr and `tang_ini_core_loaded()` returns **silently**: no declaration, no message, nothing to see. And the read is a single shot. The function directly above it, `core_id()`, retries three times with 100 ms gaps and its own comment says why -- *"a core that has only just been configured may miss the first ask"* -- while `read_reg()` next to it had no retry at all, and the boot-time call runs immediately after programming, which is exactly the moment a miss is most likely. That also explains the asymmetry that had been misleading this session for hours: `fpga` uses `core_id()` and its three retries and nearly always answered, while `tangini` needs the ABI read and failed roughly one time in three, reporting `core 0x54 has no PMOD sockets` -- which is not a property of the core at all but a read that did not come back. Measured on the board, three consecutive reads of the same core gave the ABI line, then `no PMOD sockets`, then the ABI line again. The fix gives `read_reg()` the retry `core_id()` already had, and `write_reg()` with it, three attempts with a 20 ms gap; retrying the write is safe because the socket write is idempotent. It was built as `bbfbf4e-dirty.b3ba88e`, flashed with `tools/tinytang_flash.py` over the console, and after the power cycle the same read answered six times out of six where it had been failing one time in three, and the cold boot declared the sockets on its own. One thing this cycle cost, and it is recorded rather than glossed: two attempts at the flash were spent stalled because `tinytang_flash.py` is interactive -- it asks `install ... on /dev/ttyACM0? [y/N]` -- and both were run with their stdin from `/dev/null` and their output through a buffered `tail`, so the question and the wait were invisible from here and the process looked hung; `--yes` is the flag, and the flash process itself is upload, stage, commit, then **power-cycle to run**, with the board presenting as an FT2232 in between. The cycle's durable lesson is methodological and it has now been paid for twice: a single console reading, positive or negative, is not evidence on this link, and every conclusion from one was withdrawn. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry and the next are the only `.ai` changes, and validated it as number 40 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. The changes this entry describes are in TinyTang, not in this repository, which is why Files Modified is `None.` No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Commit the fix in TinyTang -- `ports/bl616/phosphor/pmod_sockets.cpp` is modified there and uncommitted, alongside a pre-existing dirty `THIRD_PARTY.md` and `tinydesk` submodule that are not this work -- and rebuild and reflash only if the file is touched again, since the running firmware is the fixed one. The same single-shot register read exists in `ports/bl616/phosphor/oled_link.cpp` and `ae350_play.cpp`; they were found while reading and deliberately not changed, because neither is in the path this cycle was about, and changing them would have widened the cycle. Do not re-derive the boot path: `tdsh_bl616_run_until` runs `scripts/boot.tdsh` once at shell start, `tangload` applies `/tang.ini` on success, and the table is `s_socket_cores` in `pmod_sockets.cpp`, keyed `0x50` at ABI 1.8 and `0x54` at ABI 1.0, both on register `0xc0`. And judge every future console result on repeated reads.
+
+#### Files Modified:
+
+None.
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: N/A
+
+---
+
+## 41 COMMIT Unreleased 2026-10-09T18:41:11-07:00
+
+#### Coming From:
+
+Unreleased 0ea360c
+
+#### Purpose:
+
+Find why the desktop core's bitstream configured the FPGA and produced no working core, and make the flow incapable of publishing one that does.
+
+#### Outcome:
+
+The flow had been publishing builds that failed their own timing report. `67e8d724` loaded, reported `core loaded`, and then produced nothing -- no UART answer, no raster -- on a card verified byte for byte, and the difference between it and the build that worked was not the source but the place-and-route: the build carried **ten hold violations** on the `clk` domain, with clock skew of up to -2.09 ns, and `scripts/pnr-desktop.sh` passes nextpnr `--timing-allow-fail`, so nextpnr reported them and the flow packed the netlist anyway, because nothing downstream ever read the report. Hold violations do not care about frequency: a register that can capture one edge early is a register that can come up in the wrong state, which is exactly how a dead keylink and a dead raster look from outside. TinyTang's Gowin recipe already refuses to publish a binary with any setup or hold violation, which is why the vendor's build has none. Underneath the violations is the clock: `clk`, the 21.477 MHz main clock out of `pll_nes`, fails dedicated routing for **all 943 of its sinks** and rides general fabric, because the database's clock network cannot span the die -- `tools/chipdb-hclk-tiles.py` shows 171 HCLK tiles, two per row at x=0 and x=181 with 180 unmodelled columns between them, and row 108 carrying a hole at x=12..36. That is the same gap `evidence/hclk-route-gap.txt` records for the TMDS bit clock, so the two display symptoms share one cause. What placement decides is therefore not whether the clock rides fabric but how much skew that costs, and that is measurable: eight seeds on the tree's own constraints gave 5 to 10 hold violations and never zero, but every failure originated at `X32Y108/MPLLCLKOUT0`, the `pll_nes` output, and the tree pins the PLLs through `ins_loc` macros of which there are exactly twelve -- four on row 108, all of them inside the gaps, and eight on the edges. The vendor's own place-and-route put `pll_nes` at `PLL_B[1]`, which is X32Y108, and Gowin's tool knows the real network where the open database does not, so the vendor's site is the worst one available here. Sweeping site against seed found it: `PLL_R[0]`, X177Y27, the site nearest the logic, which clusters around x=133..157, with seed 23, measures **zero setup and hold violations** with every clock passing its constraint, and `div5` lands on `CLKDIV_0`, the vendor's own slot, as a side effect. That build is `7b95d942` (4,492,268 bytes from `desktop.fs` `84915457`), the user installed it, and reports VGA coming up on every one of four power cycles. What this is not is a repaired clock network: all 943 fabric fallbacks remain, the result is clean by nextpnr's delay model, which is the model the vendor's flow trusts but is a model, and the board test is what settled it. The guarantee now lives in the flow rather than in anyone remembering to look: `scripts/build-desktop-core.sh` defaults `NEXTPNR_SEED` to 23 and runs `tools/pnr-timing.py` on the place-and-route log between routing and packing, exiting without packing if any clock failed its constraint or any setup or hold path violated. The new tool reads the log rather than nextpnr's JSON because the JSON carries `fmax`, `critical_paths` and `utilization`, and `critical_paths` holds the worst setup paths only -- hold violations appear in no structured field -- and its exit code is the acceptance criterion for a desktop-core bitstream, the same bar the vendor's recipe sets. `tools/sweep-timing-parallel.sh` is the sweep that found the placement, kept because the next one will need it. One trap is recorded because it cost time and will cost it again: `7b95d942` and the violating `67e8d724` are the same byte count, 4,492,268, because they are the same design placed differently, so nothing on the board's console can tell them apart and a build's identity has to be established on the host. This entry also corrects the log's own record: entry 36 dismissed the 943 `clk` fallbacks as harmless because the design still ran, and they are not harmless, they are the root of the skew. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed `core.md` was not changed and that this entry and the previous one are the only `.ai` changes, and validated it as number 41 of the active log with a conforming four-field header, six sections in canonical order, prose in Outcome and Next Steps, an allowed Status set, and no rewrite of settled history. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+The target is unchanged and now better described: model the HCLK interconnect in apicula's chipdb, from the vendor's own `.dat` and `.fse` files the builder already parses, because that is what would let both the main clock and the TMDS bit clock reach the dedicated network instead of general fabric -- and HDMI is still dark for exactly that reason. The acceptance test for the clock is offline and now exists: `tools/sweep-timing-parallel.sh` requires zero violations, and the count of `Failed to route net 'clk'` falling from 943 is the direct measure of whether the network was modelled. Two things ride along. TinyTang's committed `fpga/desktop/desktop.cst` does not carry the PLL pinning at all -- the tree's copy does, along with the whole porting work, and all of it is uncommitted there, so the placement this cycle depends on lives only in a scratch tree and must be carried into the patch series before the next clean reconstruction. And the desktop patch consolidation recorded in `evidence/desktop-display-cycle.txt` section 7 remains deferred at the user's direction. Do not re-walk the placement seed alone, which never reached zero on the vendor's site, nor the CLKDIV bel, which `ins_loc` cannot express; do not identify a build from its size on the card; and keep the power-cycle rule on every load.
+
+#### Files Modified:
+
+- scripts/build-desktop-core.sh
+- tools/pnr-timing.py
+- tools/sweep-timing-parallel.sh
+- evidence/desktop-timing-defect.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---
