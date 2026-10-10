@@ -1968,3 +1968,33 @@ None.
 - User Test: PASS
 
 ---
+
+## 64 COMMIT Unreleased 2026-10-10T11:31:44-07:00
+
+#### Coming From:
+
+Unreleased 278a317
+
+#### Purpose:
+
+Test whether admitting the clock model's missing table-38 pairs turns them into the cross-tile wire the HDMI defect needs, so the HDMI cycle either advances or loses its lead cheaply.
+
+#### Outcome:
+
+The lead was tested and is closed, and the measurement that closed it is worth more than the change would have been. Two findings first came together as one: entry 56 measured that the vendor's `.fse` carries 1,672 and 1,259 distinct named `(dest, src)` pairs in table 38 at tiles `(54,88)` and `(54,93)` where the model holds 943 and 823, and `tools/chipdb-hclk-trace.py` showed that the divider's network input `HCLK_MUX_GAMMA30` is fed from another tile, `HCLK_MUX_EPSILON30` at `(0,0)`, which is a destination nowhere -- the cross-tile wire with no driver. Reading `fse_clock_pips_138` corrected one thing the previous cycle's handoff had asserted: table 38 *is* read, added by a still earlier cycle together with the measured CLKDIV escape wires, but only those measured ids are let through its `105..128` and `164..236` filters. The experiment removed that restriction for table 38, admitting every one of its sources at those cells. The chipdb grew from 850,124 to 855,660 bytes at `e4937467...`, so pips were added -- and the gate did not move at all: spanning 132, undriven 236, dead-end 316, identical before and after. The reason is the finding, and it reframes entry 56's number: the bridge cells `(54,88)` and `(54,93)` are **not keys in `hclk_pips` at all**, before or after, so table 38's rows never join the clock-plane graph the router sees and no amount of admitting them can change a route. The ~1,400 pairs are therefore not connections missing from the network but pairs belonging to cells the model does not treat as clock tiles in the first place, which is the same shape of answer the earlier bridge-cell experiment got and why both are now closed. What the next attempt must do instead is *make the central clock mux part of the network*: the bridge cells have to become clock tiles whose pips are in `hclk_pips`, with the EPSILON/GAMMA chain joined to the spine, and the database's own `spine_select_wires` already puts SPINE17-23 at rows 27/81, columns 92-94 -- the same column as the two bridge cells -- so the spine and the hub are co-located in the vendor's own data. Until `HCLK_MUX_EPSILON30` has a driver reaching it from the spine, `HCLK_MUX_GAMMA30` has no network feed and nextpnr must keep taking the fabric entry `L2HCLK` for the TMDS bit clock. The discipline that produced this result in minutes rather than a cycle is the project's own: `tools/chipdb-hclk-gaps.py` reports the spanning count, and `evidence/hclk-bridge-experiment.txt` established that a change which does not raise it cannot change any route. Nothing was left behind: the apicula fork was restored with `git checkout` and the chipdb from a copy taken before the rebuild, and both were verified rather than assumed -- source clean at `4281068` and the chipdb back to `57a1c2a5...` at 850,124 bytes, the documented baseline hash. No board action was taken and no bitstream was built, so all three statuses are not applicable. `evidence/hclk-table38-admission.txt` carries the numbers, the reframing and the limits, including that spanning is a necessary and not a sufficient condition and that a flat count proves only that this change added no cross-tile wire. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 64 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Make the central clock mux part of the clock model rather than adding pips inside cells it already treats as clock tiles, because that is what the two closed experiments establish the failure is not. Concretely: get the bridge cells `(54,88)` and `(54,93)` into `hclk_pips` as clock tiles, and join the EPSILON/GAMMA chain to the spine, whose selected wires the database already places at rows 27/81 and columns 92-94 in the same column as those cells; the acceptance before anything is routed is still `tools/chipdb-hclk-gaps.py`, whose spanning count must rise above 132, and the fork should be restored the same way if it does not. Only after that is it worth routing the desktop core (`Failed to route net 'hclk5'` to zero, `clk` falling from 1199), building, loading and having the user confirm HDMI with VGA still perfect. A second, independent gap is recorded so it is not mistaken for the same one: HCLK blocks 0 `(27,0)` and 1 `(27,181)` have no modelled clock escape at all, so a design placed in them has no modelled route onto the clock plane whatever else is fixed. Still open and untouched: the seed-19 discriminator in `build/clock-monitor/desktop.aa6b0f9d733b.bin`, the uncommitted TinyTang socket-retry fix, and the TinyTang active-log numbering non-conformance.
+
+#### Files Modified:
+
+- evidence/hclk-table38-admission.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

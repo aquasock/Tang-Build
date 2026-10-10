@@ -1,0 +1,77 @@
+Admitting table 38's sources does not add a cross-tile wire -- and the reason why
+
+Tested 2026-10-10.  Base: apicula fork `4281068`, chipdb `57a1c2a5...`
+(850,124 bytes).  Result: **NEGATIVE**, reverted; the toolchain is byte-identical
+to where it started, source clean and the chipdb restored to `57a1c2a5`.
+
+## What was tried
+
+The lead came from two places that turned out to be one.  Entry 56 measured that
+the vendor's own `.fse` carries 1,672 and 1,259 distinct named `(dest, src)`
+pairs in **table 38** at tiles `(54,88)` (ttyp 80) and `(54,93)` (ttyp 85), where
+the model's `clock_pips` holds only 943 and 823 -- about 1,400 pairs missing at
+the clock distribution's hub.  And `tools/chipdb-hclk-trace.py` showed that the
+divider's network input, `HCLK_MUX_GAMMA30` -- the input the vendor's bitstream
+selects and ours does not -- is fed from **another tile**,
+`HCLK_MUX_EPSILON30` at `(0,0)`, which is **a destination nowhere**: the
+cross-tile wire with no driver.
+
+`fse_clock_pips_138` already reads table 38, but only lets through the *measured*
+CLKDIV escape wires (`gw5_hclk_clk_wire_ids`); every other source in the
+`105..128` ("unknown wires") and `164..236` ("longwires") spans is discarded.
+The experiment removed that restriction for table 38, admitting every table-38
+source at those cells.
+
+## The measurement
+
+The chipdb grew, so the change did something -- 850,124 to 855,660 bytes,
+`e4937467...` -- but the gate did not move at all:
+
+```
+                     spanning   UNDRIVEN   dead-end
+  baseline               132        236        316
+  table 38 admitted      132        236        316
+```
+
+`tools/chipdb-hclk-gaps.py` is the gate because `hclk-bridge-experiment.txt`
+established that a change which does not raise **spanning** cannot change any
+route, and that reading held here.
+
+## Why, and this is the useful part
+
+The bridge cells **`(54,88)` and `(54,93)` are not keys in `hclk_pips` at all**,
+before or after the change:
+
+```
+OLD: hclk_pips tiles=171  (54,88) present=False  (54,93) present=False
+NEW: hclk_pips tiles=171  (54,88) present=False  (54,93) present=False
+```
+
+So table 38's rows never join the clock-plane graph the router sees.  That
+reframes entry 56's number: the ~1,400 pairs are not connections *missing from*
+the network -- they belong to cells the model does not treat as clock tiles in
+the first place.  Adding more of them cannot help, which is why the gate was
+flat, and it is the same shape of answer the bridge-cell experiment got.
+
+## What this means for the next attempt
+
+The fix is not "admit more sources"; it is **make the central clock mux part of
+the clock network**.  Concretely, the bridge cells have to become clock tiles
+whose pips are in `hclk_pips`, and the EPSILON/GAMMA chain has to be joined to
+the spine -- the database's own `spine_select_wires` puts SPINE17-23 at rows
+27/81, **columns 92-94 (x~93)**, which is the same column as the two bridge
+cells, so the spine and the hub are already co-located in the data.  Until
+`HCLK_MUX_EPSILON30` has a driver reaching it from the spine,
+`HCLK_MUX_GAMMA30` has no network feed and nextpnr must keep taking the fabric
+entry `L2HCLK` for the TMDS bit clock.
+
+Also known and not re-derived here: HCLK blocks 0 `(27,0)` and 1 `(27,181)` have
+no modelled clock escape at all (the fork's own note, P1.T08c/d).
+
+## Limits
+
+The gate is a pair of counts, and spanning is a *necessary* condition for a
+cross-tile route and not a sufficient one, so a flat spanning count proves only
+that this change did not add a cross-tile wire -- it does not by itself prove a
+future change that does raise it would route.  No routing was run and no board
+was involved; the change was not kept, so no bitstream was built from it.
