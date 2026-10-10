@@ -1848,3 +1848,33 @@ Have the user power-cycle the board several times with `desktop.90d3fa3a84fa.bin
 - User Test: PASS
 
 ---
+
+## 60 COMMIT Unreleased 2026-10-10T10:18:15-07:00
+
+#### Coming From:
+
+Unreleased c8f3cc2
+
+#### Purpose:
+
+Confirm across repeated power cycles, and not by a single observation, that the perfect VGA image entry 59 recorded is a stable property of `desktop.90d3fa3a84fa.bin` rather than a lucky session.
+
+#### Outcome:
+
+Four power cycles were run and all four rendered perfectly, so the configuration meets the standard entry 55 set for calling a display good. The boot path was made to exercise the right image first: `/scripts/boot.tdsh` does `CORE=/cores/console138k/desktop.bin` and then `tangload "$CORE"`, and that file was still the lined baseline, so the first power cycle booted the baseline and `fpgar 134` reported status 4 -- a test of the wrong image, recorded in the tally rather than dropped so the count is not inflated. The monitor image was then installed as `/cores/console138k/desktop.bin` itself, which is the one change this cycle made to the board, and with the lined baseline preserved on the card as `desktop-vga-baseline.bin` and on the host at `build/vga-diagnostic/baseline/desktop.bin` so reverting is one `tangput`. Every boot was tied to the bitstream by two independent reads of the monitor stamp rather than by file size or assumption, `fpgar 134` returning `0x4d4f4e31` with status 0 on all four, with `fpgar 0` returning `0x00544453` and the core answering as `core 84` at 2 Mbaud, which is the practice this project adopted after `7b95d942` and `67e8d724` proved to be the same byte count and nothing on the console could tell them apart. The clocks were re-read on every boot and never moved: `clk` between 21.5020 and 21.5053 MHz against its 21.49 MHz constraint, `hclk` between 74.2496 and 74.2501 MHz against its intended 74.25, both probes agreeing inside 0.02 percent each time, so the same instrument that answered entry 57's question now also shows the delivered core is not drifting between boots. The waiting time was spent testing entry 59's skew lead rather than leaving it as a hunch, and the lead is weaker than it looked: seed 19, the only other timing-clean placement the pinned configuration has, routes with `clk` skew of 4.657 ns, which is *above* the lined baseline's 4.389 ns, while seed 17's 4.077 ns renders perfectly; so `clk` skew does not order the outcome, entry 55's withdrawal of the skew theory survives this measurement, and the honest position is that the lines are placement-dependent without a known mechanism. That splits into two readings that predict differently -- a threshold below about 4.2 ns makes seed 19 lined, a cause unrelated to `clk` skew makes it perfect -- and seed 19's bitstream was built and kept as the discriminator, `desktop.aa6b0f9d733b.bin` at 4,463,286 bytes, packed from the same routed netlist the 4.657 ns was measured on and, on a separate measurement, timing-clean at setup 0 and hold 0. It has deliberately not been run, because loading it during the stability run would confound the two results. What this cycle does not claim: four boots on one board with one monitor is a bar, not a proof, and it says nothing about other placements, other boards or a cold board. `evidence/clock-monitor.txt` carries the four-boot tally, the wrong-image first attempt, the boot-path and card state, the seed-19 skew result and the reasoning that separates the two readings. TinyTang's own log entry 72 keeps `User Test: NOT RUN` because it is settled history, and TinyTang entry 73 records the acceptance against the core it describes. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 60 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Run the seed-19 discriminator and record which reading it supports, because that is the difference between shipping an understood configuration and shipping a coin flip: load `build/clock-monitor/desktop.aa6b0f9d733b.bin` after the seed-17 run is closed, and expect it lined if a `clk` skew threshold below about 4.2 ns exists and perfect if the lines have a cause unrelated to `clk` skew. If seed 19 is also perfect then skew is not the discriminator and the next suspect should be something structural about seed 17's placement rather than a scalar property of the clock net, which is the shape of answer entry 55's withdrawn suspects failed to give; if seed 19 is lined then the threshold is real and the flow should screen clean placements by `clk` skew before staging one, which `tools/clock-skew-report.py` already measures as a post-route hook. Whether the monitor image stays the card's boot default is the user's call and is currently yes; reverting is one `tangput` of `desktop-vga-baseline.bin` over `desktop.bin`. The chipdb lead in `evidence/clock-chipdb-ground-truth.txt` is unchanged and remains the root cause of the 1199 `clk` fabric fallbacks, and the uncommitted TinyTang socket-retry fix, the deferred desktop patch consolidation and the TinyTang active-log numbering non-conformance all remain open.
+
+#### Files Modified:
+
+- evidence/clock-monitor.txt
+
+#### Status:
+
+- Build: PASS
+- Deployment: PASS
+- User Test: PASS
+
+---

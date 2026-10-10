@@ -207,3 +207,79 @@ untouched: 1199 `clk` fabric fallbacks remain, 256 more than the baseline, and
 what changed is only that this placement's consequence for the picture is
 invisible.
 
+
+Power-cycle stability of desktop.90d3fa3a84fa.bin
+----------------------------------------------
+`/cores/console138k/desktop.bin` was set to `desktop.90d3fa3a84fa.bin` so
+`/scripts/boot.tdsh` (which does `CORE=/cores/console138k/desktop.bin` then
+`tangload "$CORE"`) boots the monitor core.  Each boot is tied to the bitstream
+by repeated reads of the stamp, not assumed, because a single console read is
+not evidence on this link.  The standard is entry 55's: four power cycles.
+
+  boot 1  2026-10-10T10:14  user: "the VGA came up perfect this time"
+          fpgar 134 -> 0x4d4f4e31 status 0   (twice)
+          fpgar 0   -> 0x00544453 status 0   fpga: core 84 at 2 Mbaud
+          fmon 5000: clk 21502050 / clk_b 21505305 Hz, pix 74250066 / pix_b 74249954 Hz
+
+  boot 2  2026-10-10T10:22  user: "pass"
+          fpgar 134 -> 0x4d4f4e31 status 0   (twice)
+          fpgar 0   -> 0x00544453 status 0   fpga: core 84 at 2 Mbaud
+          fmon 5000: clk 21502762 / clk_b 21505283 Hz, pix 74249955 / pix_b 74249966 Hz
+
+  boot 3  2026-10-10T10:30  user: "pass"
+          fpgar 134 -> 0x4d4f4e31 status 0   (twice)
+          fpgar 0   -> 0x00544453 status 0   fpga: core 84 at 2 Mbaud
+          fmon 5000: clk 21503028 / clk_b 21505249 Hz, pix 74249993 / pix_b 74249956 Hz
+
+  boot 4  2026-10-10T10:38  user: "pass"
+          fpgar 134 -> 0x4d4f4e31 status 0   (twice)
+          fpgar 0   -> 0x00544453 status 0   fpga: core 84 at 2 Mbaud
+          fmon 5000: clk 21503067 / clk_b 21505265 Hz, pix 74249606 / pix_b 74249966 Hz
+
+Result: four of four boots rendered perfectly, and every boot was tied to the
+same bitstream by two independent reads of the monitor stamp rather than
+identified by file size -- the practice the project adopted after `7b95d942`
+and `67e8d724` turned out to be the same byte count.  Across all four boots the
+measured clocks never moved outside 21.5020-21.5053 MHz for `clk` and
+74.2496-74.2501 MHz for `hclk`, both probes agreeing inside 0.02 percent, so the
+image is stable across the power cycles tested and not a lucky session.
+
+Limits, stated because four boots is a bar and not a proof: four boots on one
+board with one monitor; it says nothing about other placements, other boards or
+a cold board, and it does not explain *why* this placement renders where the
+lined baseline does not -- the skew measurement above weakens the obvious
+answer rather than confirming it.  The seed-19 discriminator
+(`desktop.aa6b0f9d733b.bin`, timing-clean, clk skew 4.657 ns) is built and not
+yet run.
+
+The first attempt before this is recorded rather than dropped: a power cycle
+with the *lined baseline* still as `desktop.bin` booted that baseline, which
+`fpgar 134` reported as status 4, so it was a test of the wrong image and not a
+stability failure.
+
+Is clk skew the discriminator?  Measured, and the answer is "not on its own"
+---------------------------------------------------------------------------
+The second clean placement was measured so the skew lead in entry 59 could be
+tested rather than assumed.  Same tool (`tools/clock-skew-report.py` as the
+nextpnr post-route hook), same netlist, same pinned PLLs:
+
+  seed 17   clk 1199 sinks  1.549 .. 6.206   skew 4.077 ns   perfect image (user, boots 1-2)
+  seed 19   clk 1199 sinks  1.549 .. 6.206   skew 4.657 ns   clean timing, display not yet seen
+  baseline  clk               (entry 53)     skew 4.389 ns   lined  (older netlist, ~75 cells fewer)
+
+Skew does not order the outcome: 4.077 renders perfectly while 4.389 is lined,
+and the other clean placement sits *above* the lined one.  So the lead recorded
+in entry 59 is weakened, not confirmed, and entry 55's withdrawal of the skew
+theory survives this measurement.
+
+Two readings are consistent with the numbers and only one experiment separates
+them.  Either skew is not the discriminator and seed 17's perfection has some
+other cause, or there is a threshold somewhere below ~4.2 ns that seed 17 clears
+and both 4.389 and 4.657 miss.  The prediction differs: a threshold means
+**seed 19 is lined**, a cause unrelated to `clk` skew means it is perfect.
+
+Seed 19's bitstream is therefore built and kept as the discriminator:
+`build/clock-monitor/desktop.aa6b0f9d733b.bin`, 4,463,286 bytes, packed from
+the same routed netlist the skew above was measured on.  It must be tested on
+the board after the seed-17 stability run, not during it, so the two results are
+not confounded.
