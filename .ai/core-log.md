@@ -2028,3 +2028,33 @@ Target the HCLK plane itself, because `HCLK_MUX_EPSILON30` is an `hclk_pips` nam
 - User Test: N/A
 
 ---
+
+## 66 COMMIT Unreleased 2026-10-10T11:36:17-07:00
+
+#### Coming From:
+
+Unreleased d7fbc03
+
+#### Purpose:
+
+Find what should drive `HCLK_MUX_EPSILON30`, the undriven wire that leaves the clock hub's network input unreachable, so the HDMI defect's modelling work has a real target instead of a guessed one.
+
+#### Outcome:
+
+The target turned out to be a placeholder, and that is the finding. `HCLK_MUX_EPSILON30` is not a device wire and not a name from any table: it is a string the builder invents in a hand-written "default PIPs" block in `apicula/chipdb.py` around lines 1618-1634, whose own comment says the GW5A tables "do not include descriptions of the default PIPs.  So we add them manually by placing them in cell (0, 0)". Inside that block every use of `EPSILON` is as the **source** argument of `mk_hclk_pip`, and a grep of the whole package finds it in those lines and nowhere else, never as a destination -- so the wire is undriven **by construction**, and there is no vendor row being dropped. The consequence is that the previous two attempts were both aimed at the wrong mechanism: `HCLK_MUX_BETA*` is driven from the real table-48 walk, while `EPSILON`, `GAMMA` and `HUB` live in a parallel synthetic namespace the walk never touches, with the same block writing `GAMMA -> HUB` as the default hub connection. The synthetic chain is still in the model, because the arch generator reads `hclk_pips`, so nextpnr sees a clock path with a dead input -- which is consistent with everything measured so far and with the divider taking the fabric entry `L2HCLK`. What this does not license is a fix by admission, and that is the second half of the answer: the driver cannot be read from the vendor's `.fse` because the builder's own comment says the default pips are absent from the tables, and `.ai/core.md` forbids inventing chipdb entries -- so the driver has to be **measured**, by the method this project already used once for the CLKDIV escape wires in P1.T08d, pinning one CLKDIV with the vendor's own `INS_LOC "<inst>" {LEFT,RIGHT,BOTTOM}SIDE[0~7]`, decoding the lit table-48 rows at the block cell, and reading which real wire the GAMMA/HUB path takes its input from; twenty-four single-CLKDIV runs answered the lane question that way and this is the same shape of question. Nothing was modified in either repository: the apicula fork was read, not written, and remains clean at `4281068` with its chipdb at `57a1c2a5...` at 850,124 bytes, and no board action was taken and no bitstream built, so all three statuses are not applicable. `evidence/hclk-epsilon-undriven.txt` carries the finding, the quoted code, what it rules out and the limits, including that the claim is about what the *code* drives and that whether the real die routes something into that mux under a fuse the tables do not describe is exactly what the measurement has to settle. The required core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai` diff, confirmed that `core.md` and settled history are intact and that only this appended entry changed under `.ai/`, and validated the four-field header, six canonical sections, prose in Outcome and Next Steps, an allowed Status set, sequential numbering as entry 66 of the active log and a count within the 100-entry limit. No part of this repository, TinyTang or Tang-Phosphor was found to use intellectual property beyond what `THIRD_PARTY.md` already records.
+
+#### Next Steps:
+
+Measure the GAMMA/HUB input rather than admitting or inventing it, because the placeholder cannot be fixed from the vendor's tables and `.ai/core.md` forbids inventing entries: repeat the P1.T08d method -- one CLKDIV pinned per vendor run with `INS_LOC "<inst>" {LEFT,RIGHT,BOTTOM}SIDE[0~7]`, the lit table-48 rows decoded at the block cell -- and read which real HCLK wire feeds the synthetic hub path, then encode what was measured and no more. Gate any change that follows with `tools/chipdb-hclk-gaps.py` on `hclk_pips`, requiring `spanning` to rise above 132, and restore the fork if it does not; that gate has now correctly closed three attempts and is the cheapest half of this loop at about twelve seconds per chipdb rebuild. Before spending the runs, decide with the user whether this is the right cycle at all, because the vendor-bitstream measurements are the project's most expensive instrument and the same afternoon could instead answer whether seed 17's perfect image is understood or lucky via `build/clock-monitor/desktop.aa6b0f9d733b.bin`. The symptom that motivates the work is unchanged and still has no workaround: the open build drives VGA perfectly and produces no HDMI, with the bit clock on fabric at all four sinks. Still open and untouched: the TinyTang socket-retry fix and the TinyTang active-log numbering non-conformance.
+
+#### Files Modified:
+
+- evidence/hclk-epsilon-undriven.txt
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

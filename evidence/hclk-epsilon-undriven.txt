@@ -1,0 +1,61 @@
+Why HCLK_MUX_EPSILON30 has no driver: it is a placeholder the builder never drives
+
+Found 2026-10-10 while looking for what should drive it.  Base: apicula fork
+`4281068`, chipdb `57a1c2a5...`.  Nothing was modified; this is read from source.
+
+## The finding
+
+`HCLK_MUX_EPSILON30` is not a device wire and not a name from any table.  It is
+a **string the builder invents** in a hand-written "default PIPs" block in
+`apycula/chipdb.py` (around lines 1618-1634), whose own comment explains the
+block: the GW5A tables "do not include descriptions of the default PIPs.  So we
+add them manually by placing them in cell (0, 0) -- this works because the
+default PIP has no fuse."
+
+Inside that block, every use of EPSILON is as the **source** argument of
+`mk_hclk_pip`:
+
+```python
+mk_hclk_pip(i, row, col, f'HCLK_MUX_EPSILON{i}0', f'HCLK_BUF_AI{i}0')
+mk_hclk_pip(i, row, col, f'HCLK_MUX_EPSILON{i}0', f'HCLK_MUX_GAMMA{i}0')
+mk_hclk_pip(i, row, col, f'HCLK_MUX_EPSILON{i}4', f'HCLK_MUX_GAMMA{i}2')
+...
+src  = f'HCLK_MUX_GAMMA{i}0';  dest = f'HCLK_HUB{i}0'   # "default hub connection"
+```
+
+A grep of the whole package for `EPSILON` finds it in exactly those lines and
+nowhere else, and **never as a destination**.  So there is no code path that
+drives it: `HCLK_MUX_EPSILON30` is undriven by construction.
+
+## What that means, and what it rules out
+
+- The earlier reading -- that the model is "missing pips the vendor's data
+  carries" -- is **not** what is wrong here.  There is no vendor row to admit.
+  The GAMMA/HUB path is a **hand-written approximation** whose input terminal
+  was left unconnected, and the same block writes `GAMMA -> HUB` as a default.
+- It also explains the shape of the graph: `HCLK_MUX_BETA*` is driven from the
+  real table-48 walk (the per-block lit rows named in the comment at ~1766),
+  while `EPSILON`, `GAMMA` and `HUB` live in a parallel synthetic namespace that
+  the walk never touches.  The synthetic path is still in the model -- the arch
+  generator reads `hclk_pips` -- so nextpnr sees a chain with a dead input.
+- The earlier bridge-cell and table-38 experiments were therefore both aimed at
+  the wrong mechanism, and neither could have worked.
+
+## What the fix has to be
+
+Not an admission and not an invention: `core.md` forbids inventing chipdb
+entries, and this one cannot be read from the vendor's `.fse` because the
+builder's own comment says the default pips are absent from the tables.  The
+driver has to be **measured**, by the method this project already used once for
+the CLKDIV escape wires (P1.T08d): pin one CLKDIV with the vendor's own
+`INS_LOC "<inst>" {LEFT,RIGHT,BOTTOM}SIDE[0~7]`, decode the lit table-48 rows at
+the block cell, and read which real wire the GAMMA/HUB path takes its input
+from.  Twenty-four single-CLKDIV vendor runs answered the lane question that
+way; this question is the same shape and wants the same instrument.
+
+## Limits
+
+Read from the fork's source only -- no build, no routing, no board.  The claim
+is that no *code* drives EPSILON; whether the real die routes something into
+that mux under a fuse the tables do not describe is exactly what the measurement
+above has to settle.
