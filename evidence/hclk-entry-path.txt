@@ -1,0 +1,177 @@
+The clock model has no entry into any HCLK block, and the vendor's own data names the wire
+
+Cycle 2026-10-10, the oracle-run cycle. Base: Tang-Build `3177ae5`, apicula fork
+`4281068`, chipdb `57a1c2a5...` (850,124 bytes).  **No repository was modified.**
+Everything below is either read from source, read from the built database, or
+built in `/tmp` from a copy.  The fork is clean and its chipdb byte-identical at
+the end of the cycle.
+
+The plan for this cycle was entry 66's: pin one CLKDIV per vendor run and decode
+the lit table-48 rows, to learn what should drive the model's undriven hub input.
+What follows is why that instrument cannot answer the question as posed, and
+what the question actually is.
+
+## 1. The instrument is validated: the database rebuilds byte-for-byte
+
+Before trusting any delta, the rebuild was controlled.  A copy of the fork's
+`apycula` was built with the recorded command:
+
+    GOWINHOME=/home/vash/tools/gowin-1.9.11.03 \
+    PYTHONPATH=<root>:/home/vash/tools/pydeps \
+    <oss-cad-suite>/py3bin/python3 -m apycula.chipdb_builder GW5AST-138C -o <out>
+
+    /tmp/chipdb-control.msgpack.xz
+      sha256 57a1c2a54e9d8b18dbec8442420eb280de79e7d95de598e6ceb9f74ebff9182f
+      850,124 bytes  -- identical to the fork's own chipdb
+
+So the sandbox reproduces the model exactly, and a change to the generator can
+be attributed to the change rather than to the environment.  That control did
+not exist before this cycle; it costs one rebuild and should be repeated before
+any future attempt.
+
+## 2. The inter-HCLK branch of the table walk is unreachable
+
+`gw5_make_hclk_pips` walks table 48 and builds the inter-HCLK pips in a branch
+whose test requires `srcid >= hclk_off`, but that branch is nested inside
+`if srcid < hclk_off:`.  Read from the fork's source (indentation shown):
+
+    if srcid < hclk_off:                                            # line 1523
+        if srcid in range(104, 108):      # CLKDIV outputs
+            ...
+        elif srcid in {84, 85}:
+            continue
+        elif destid < hclk_off:
+            ...
+        elif srcid in range(hclk_off, hclk_off + 4*ihclk_wire_num) \
+             and destid in range(hclk_off, hclk_off + 4*ihclk_wire_num):   # L1540
+            src = wnames.hclknames[srcid + 5 * hclk_off]
+            dest = wnames.hclknames[destid + 5 * hclk_off]
+            mk_hclk_pip('_IHCLK', row, col, src, dest, fuses)
+
+The last `elif` can never be true: it is inside the `srcid < hclk_off` branch.
+Confirmed twice over -- by reading the source with indentation markers and by
+parsing the function with `ast` and dumping the if/elif chain.
+
+Second, the five inter-HCLK bridge cells `(63,0) (63,181) (108,0) (108,118)
+(108,181)` carry eight table-48 rows each, all inter-HCLK, and are never walked
+at all, because `gw5_hclk_idx` returns -1 for them.  So the vendor's inter-HCLK
+rows are dropped twice, and the only inter-HCLK pips the model has are the
+hand-written ones at `(0,0)`, whose endpoints are string literals
+(`HCLK_IHCLK_OUT00` ...) rather than table names.
+
+`wirenames.py` corroborates the intent: the 138C table is extended to
+`6 * 187 + 4 * 38 == 1274` explicitly so that the `+ 5 * hclk_off` naming of
+that branch has names to reach.
+
+## 3. The measured result: fixing it does not help, and the gate closes it
+
+Both halves were fixed in the sandbox -- the branch dedented to the outer chain,
+and the five bridge cells admitted -- and the database rebuilt:
+
+    /tmp/chipdb-branchfix.msgpack.xz
+      sha256 9ed2b1b9c76dbb94f7a5d62e51d55c29b2c4712ca4e3d8a78c8ac7b4c3115d66
+      850,964 bytes  (840 bytes larger, so pips and nodes were added)
+
+Gate, `tools/chipdb-hclk-gaps.py`, control against patched:
+
+    spanning (carry between tiles) : 132  ->  132      <-- UNCHANGED
+    UNDRIVEN (consumed, no source) : 236  ->  272
+    dead-end (source, no consumer) : 316  ->  404
+    tile graph                     : 1 component  ->  6 components,
+                                     sizes [171, 1, 1, 1, 1, 1]
+
+The five bridge cells become isolated islands.  The gate's rule -- spanning must
+rise above 132 -- fails, so this attempt is closed, and it is the fourth the gate
+has correctly closed.  The result also explains the earlier cycle's note that
+these entries are intra-cell muxes: named `hclknames[srcid + 5 * hclk_off]`, the
+bridge rows' endpoints are consumed by nothing else in the model, so they cannot
+join two blocks.  Whatever the bridge data means, this naming is not it.
+
+## 4. What the built model actually contains at the block that matters
+
+Read out of the control chipdb.  `(81,181)` is the block that serves this
+design: two of the three TMDS serialisers and the `CLKDIV` that divides the bit
+clock down to the pixel clock.  Every input of every mux there, and where it is
+driven:
+
+    HCLK_MUX_ALPHA30  <- CLKDIV2_O30     driven NOWHERE
+                      <- HCLK_BUF_AO30   driven at (0,0) by HCLK_BUF_AI30
+                                         <- HCLK_MUX_EPSILON30, undriven
+                      <- HCLK_BUF_BO30   driven at (0,0) by HCLK_BUF_BI30
+                                         <- HCLK_MUX_BETA30
+                      <- HCLK_UNK562 (= VCC) driven NOWHERE
+    HCLK_MUX_BETA30   <- HCLK_UNK561 (= VSS), HCLK_UNK562 (= VCC),
+                         HCLK_UNK577 (block-local 16), HCLK_UNK591 (L2HCLK30)
+      of those, only L2HCLK30 is driven -- by nextpnr's fabric entry, not by any pip
+    HCLK_MUX_GAMMA30  <- HCLK_UNK563, HCLK_UNK571, HCLK_UNK581   all driven NOWHERE
+                         (571 <- 567 <- nothing; 581 <- 577 <- nothing)
+    CLKDIV_I30        <- HCLK_MUX_ALPHA30
+
+And the wider structure, over all six blocks:
+
+    HCLK_GCLK_MUX<i><j>   driven NOWHERE        -- the inter-HCLK ring has no input
+    HCLK_MUX_DELTA<i><j>  drives NOTHING        -- and no output
+    L2HCLK<i><j>          driven NOWHERE        -- the fabric entry, driven by nextpnr
+    HCLK_MUX_EPSILON*     driven NOWHERE        -- a synthetic source with no source
+
+So the model's dedicated clock network has **no entry point into any HCLK
+block**.  The ring is closed at both ends, the synthetic epsilon chain starts
+from nothing, and the only input any block mux can actually receive is the
+fabric entry `L2HCLK`.  That is the graph-level fact behind the three
+`Failed to route net 'hclk5' ... using dedicated routing` warnings: the router
+has no dedicated edge to take, falls back to fabric, and `gowin_pack` encodes
+the fallback faithfully.
+
+## 5. The vendor's own data names the wire the block is entered by
+
+Re-measured this cycle, not carried over.
+
+(a) HCLK block state, decoded from the vendor's own desktop bitstream with the
+unpacker's own `parse_hclk_block` (`/home/vash/tools/pnr-test/hclk-state.py`).
+18122 block visits, exactly one non-empty:
+
+    HCLKBLOCK r=81 c=181 -> {'CLKDIV_0': {'DIV_MODE="5"'},
+                             'HCLK3': {'HCLK_MUX_ALPHA30': '"HCLK_BUF_BO30"',
+                                       'HCLK_MUX_GAMMA30': '"HCLK_UNK581"'}}
+
+For comparison, our own build's block at the same cell lights `CLKDIV_3`,
+`HCLK_MUX_BETA31 = L2HCLK31`, `HCLK_MUX_BETA33 = L2HCLK33`,
+`HCLK_MUX_ALPHA31 = HCLK_BUF_BO31`, `HCLK_MUX_ALPHA33 = HCLK_BUF_BO33`.
+
+(b) The vendor's table 48 at that cell (ttyp 276, 165 rows) contains, among its
+rows, `(16,20) (16,34) (16,35) (16,36) (16,37) (20,24)` -- that is, block-local
+**16 -> 20**, **16 -> 34,35,36,37** and **20 -> 24**.  `34-37` are local ids of
+`HCLK_MUX_BETA30..33` and `24` is `HCLK_MUX_GAMMA30` (`HCLK_UNK581` is local 20,
+`HCLK_UNK577` is local 16).
+
+So the chain the model already builds is the vendor's exact chain, and
+**block-local wire 16 is the block's clock entry**: it feeds all four BETA muxes
+and, through local 20, the GAMMA mux that the vendor's bitstream selects.
+
+(c) Nothing in table 48 drives local 16, and the vendor's block lights no other
+attribute.  Its driver is therefore a fuse-less default or an edge from a
+structure table 48 does not describe -- which is what the model's own
+hand-written "default PIPs" block is a stand-in for.
+
+## 6. Why the approved instrument cannot answer this
+
+The CLKDIV-perturbation oracle works by changing the design and reading which
+*table-48 fuse rows* light.  A fuse-less default has no fuse rows: it cannot be
+recovered by decoding anywhere, because there is nothing in the bitstream to
+decode.  Entry 66 proposed that instrument on the assumption that the driver was
+an off-table-but-encoded connection; this cycle establishes that the wire is
+named, that it is the entry to the block, and that the block's own table does not
+carry its driver.
+
+## Limits
+
+- No board action, no routing run, no load: everything here is source and model
+  level.  The routing consequence is stated as a graph fact, not as a measurement
+  of nextpnr's behaviour under the change.
+- The "no dedicated entry" claim is about `db.hclk_pips` as the generator builds
+  it, not about the die.
+- The patched database was built and gated; it was not routed, so the effect of
+  the bridge/branch change on a real route is untested -- the gate's spanning
+  count is the reason, and it did not move.
+- Only two block cells' table 48 was inspected in detail (ttyp 276 at (81,181)
+  and ttyp 275 at (81,0)); both carry the same 165-row set.
