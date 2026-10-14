@@ -10,21 +10,24 @@ Tang Console 138K and talked over its UART.  The project's own desktop core now
 goes through the whole flow with the same tools — it places, routes, packs,
 loads over both JTAG and `tangload`, and runs on the board, answering on UART1
 at 2 Mbaud.  It renders its picture over **VGA**, on hardware and repeatedly.
-Its **HDMI** output is the one thing that does not work, and the reason is now
-isolated by experiment rather than guessed: the same RTL through the vendor flow
-produces colour and through the open flow produces none, so the flow is the
-variable.  The mechanism is located in the clock model — the vendor's
-place-and-route takes the 371.25 MHz TMDS bit clock off the dedicated HCLK
-network, while the open flow's model leaves that network input undriven, so the
-bit clock is left on general fabric at all four serialiser sinks and at some
-placements cannot be routed at all.  That is a gap in the device database's
-clock model, not a change the design needs — and that gap is now **closed as
-characterised rather than fixed**: the HCLK block that serves this core has no
-clock entry anywhere in the vendor's own device tables, and every change this
-project can make to the generated model either moves no route at all or costs
-the pixel clock a thousand of them.  An open-flow build does not carry HDMI, and
-nothing here should be expected to change that until a measured clock entry
-exists — [`evidence/hclk-gclk-inbound-gate.txt`](evidence/hclk-gclk-inbound-gate.txt).
+**HDMI now works too.**  This paragraph used to end by saying that the open flow
+carried no HDMI and that the clock-model gap was "closed as characterised rather
+than fixed".  That conclusion was overtaken the following day and is wrong in
+hindsight.  The operative fault was not a missing clock entry but the fork's
+chipdb splitting each long side between its HCLK blocks at the row-63 inter-HCLK
+bridge instead of at the block midpoint, so `io2hclk` served the TMDS
+serialiser's row from the wrong block; apicula `93761f4` moves the split to the
+midpoint, and with it nextpnr places all three serialisers on a block that
+carries the lane bits they need, with the packer corrections in `1c2b6cb` doing
+the rest.  The desktop core drives HDMI on hardware, and later work in the
+TinyTang tree — the serial-clock PLL moved beside the HDMI bank, and the clock
+lane serialised through a fourth OSER10 — made the picture hold to 60 C.  See
+TinyTang's core-log entries 52 and 55 and its `THIRD_PARTY.md`.  The reasoning
+under [`evidence/`](evidence/) is kept as the record of how the question was
+pursued, not as its answer.
+
+This repository is a **reference, not a build input**: nothing in a release
+links against it, and `TinyTang/deps.conf` records it as such.
 
 ## Why this matters
 
@@ -60,7 +63,7 @@ Verilog  --yosys-->  JSON  --nextpnr-himbaechel-->  routed JSON  --gowin_pack-->
       picture repeatedly, and four power cycles rendered perfectly
       ([`evidence/desktop-vga-display.txt`](evidence/desktop-vga-display.txt),
       [`evidence/clock-monitor.txt`](evidence/clock-monitor.txt))
-- [ ] …**and over HDMI.**  The same raster, serialised: it needs the three
+- [x] …**and over HDMI.**  The same raster, serialised: it needs the three
       OSER10 serialisers and the 371.25 MHz `hclk5` bit clock that feeds them,
       and no open-flow build tested produces a signal on it.  What is *not* the
       cause is established: the build's clock and pad configuration at the
@@ -84,6 +87,11 @@ Verilog  --yosys-->  JSON  --nextpnr-himbaechel-->  routed JSON  --gowin_pack-->
       today moves the route.  **HDMI on the open flow is out of scope until a
       measured clock entry exists**
       ([`evidence/hclk-gclk-inbound-gate.txt`](evidence/hclk-gclk-inbound-gate.txt))
+      — **corrected 2026-10-13:** the conclusion above is wrong.  The fault was
+      the chipdb's HCLK-block split point rather than a missing clock entry, it
+      is fixed in apicula `93761f4` plus the packer corrections in `1c2b6cb`, and
+      the desktop core drives HDMI on hardware.  See TinyTang's core-log entries
+      52 and 55.
 - [x] `.fs` → `.bin` conversion, so open-built cores load from the SD card
       through TinyTang's existing `tangload` —
       [`tools/fs-to-bin.py`](tools/fs-to-bin.py), validated by reproducing

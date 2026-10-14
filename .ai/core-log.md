@@ -2386,3 +2386,34 @@ None.
 - User Test: N/A
 
 ---
+
+## 78 COMMIT Unreleased 2026-10-13T18:28:35-07:00
+
+#### Coming From:
+
+Unreleased 737ddb4
+
+#### Purpose:
+
+Correct this repository where later work in the TinyTang tree overtook it, and give it the licence it never had.
+
+#### Outcome:
+
+Later work overtook three of this repository's conclusions, and all three were corrected in place. The README's opening said the desktop core's HDMI "is the one thing that does not work" and closed by saying an open-flow build carries no HDMI, and its status list kept an unchecked "...and over HDMI" item; each now records that the operative fault was not the clock model's entry into an HCLK block but the fork's chipdb splitting each long side between its HCLK blocks at the row-63 inter-HCLK bridge instead of at the block midpoint, so `io2hclk` served the TMDS serialiser's row from the wrong block, and that apicula `93761f4` moves the split to the midpoint while the packer corrections in `1c2b6cb` do the rest. The desktop core drives HDMI on hardware, and TinyTang's serial-clock PLL move and OSER10 clock lane held the picture to 60 C, which TinyTang's core-log entries 52 and 55 and its `THIRD_PARTY.md` record. `TOOL-031` drew the same wrong conclusion in its consequence and was revised in place, its statement flagged as not re-measured. The README also now states that this repository is a reference and not a build input, which TinyTang's `deps.conf` records. Finally, the repository had no `LICENSE` at all; it now carries MIT, and because the files under `patches/` are modifications to upstream sources the licence names their terms rather than leaving them implied: `0001-open-toolchain-portability.patch` patches nestang's `src/iosys/iosys_bl616.v` and so reproduces lines of GPL-3.0 code, while `0002` and `0003` patch apicula, which is MIT. No build, deployment or hardware test applies. The core-syntax audit re-read `.ai/core.md` and `.ai/core-syntax.md`, inspected the complete `.ai/` diff, confirmed `.ai/core.md` was not changed and no settled log entry was rewritten, and validated this entry's six sections, sequential number, prose, Status values and the log's 100-entry limit.
+
+#### Next Steps:
+
+`THIRD_PARTY.md` records the components this repository uses but does not mention the `patches/` directory at all, which the licence now points at; a future cycle should give the patches their own entry there. Beyond that this repository stays as it is: its conclusions are history, its corrections point at TinyTang for the current record, and nothing in a release links against it.
+
+#### Files Modified:
+
+- LICENSE
+- README.md
+
+#### Status:
+
+- Build: N/A
+- Deployment: N/A
+- User Test: N/A
+
+---

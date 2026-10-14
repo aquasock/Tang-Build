@@ -1,0 +1,31 @@
+MIT License
+
+Copyright (c) 2026 the Tang-Build contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+Third-party material carried in this repository is not covered by the licence
+above.  `THIRD_PARTY.md` records the components this repository uses.  The files
+under `patches/` are modifications to upstream sources and carry those sources'
+terms: `0001-open-toolchain-portability.patch` patches nestang's
+`src/iosys/iosys_bl616.v`, so it reproduces lines of GPL-3.0 code and GPL-3.0
+governs those lines; `0002-iologic-encodable-fuses.patch` and
+`0003-hclk-iol-fclk-lanes.patch` patch apicula, which is MIT.
